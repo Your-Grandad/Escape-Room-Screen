@@ -106,6 +106,16 @@ def initialize(database_path: Path | str) -> None:
                 full_screen INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+
+            CREATE TABLE IF NOT EXISTS admin_credentials (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                password_hash TEXT,
+                session_version INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            INSERT INTO admin_credentials (id) VALUES (1)
+            ON CONFLICT(id) DO NOTHING;
             """
         )
         existing_columns = {
@@ -198,3 +208,38 @@ def initialize(database_path: Path | str) -> None:
                 "ALTER TABLE hint_presets ADD COLUMN full_screen INTEGER NOT NULL DEFAULT 0"
             )
         connection.commit()
+
+
+def get_admin_credentials(database_path: Path | str) -> tuple[str | None, int]:
+    with closing(connect(database_path)) as connection:
+        row = connection.execute(
+            """
+            SELECT password_hash, session_version
+            FROM admin_credentials
+            WHERE id = 1
+            """
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("Admin credentials are not initialized.")
+    return row["password_hash"], row["session_version"]
+
+
+def update_admin_password(database_path: Path | str, password_hash: str) -> int:
+    with closing(connect(database_path)) as connection:
+        connection.execute(
+            """
+            UPDATE admin_credentials
+            SET password_hash = ?,
+                session_version = session_version + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+            """,
+            (password_hash,),
+        )
+        row = connection.execute(
+            "SELECT session_version FROM admin_credentials WHERE id = 1"
+        ).fetchone()
+        connection.commit()
+    if row is None:
+        raise RuntimeError("Admin credentials are not initialized.")
+    return row["session_version"]

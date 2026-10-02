@@ -15,7 +15,9 @@ from flask import (
     session,
     url_for,
 )
+from werkzeug.security import check_password_hash, generate_password_hash
 
+from .database import get_admin_credentials, update_admin_password
 from .runtime import DisplayRuntime
 from .localization import translate
 from .uploads import (
@@ -31,10 +33,25 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
     gpio = runtime.gpio
     display_power = runtime.display_power
     upload_folder = Path(app.config["UPLOAD_FOLDER"])
+    database_path = Path(app.config["DATABASE"])
+
+    def admin_session_is_valid() -> bool:
+        _password_hash, session_version = get_admin_credentials(database_path)
+        return bool(
+            session.get("admin")
+            and session.get("admin_session_version") == session_version
+        )
 
     def require_admin() -> None:
-        if not session.get("admin"):
+        if not admin_session_is_valid():
+            session.clear()
             abort(401)
+
+    def password_is_valid(password: str) -> bool:
+        password_hash, _session_version = get_admin_credentials(database_path)
+        if password_hash is not None:
+            return check_password_hash(password_hash, password)
+        return secrets.compare_digest(password, app.config["ADMIN_PASSWORD"])
 
     def require_csrf() -> None:
         token = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token")
@@ -75,13 +92,18 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             csrf_token=csrf_token(),
         )
 
-    def render_settings_page(error: str | None = None) -> str:
+    def render_settings_page(
+        error: str | None = None,
+        password_error: str | None = None,
+    ) -> str:
         context: dict[str, Any] = {
             "settings": store.get(),
             "csrf_token": csrf_token(),
         }
         if error is not None:
             context["error"] = error
+        if password_error is not None:
+            context["password_error"] = password_error
         return render_template("settings.html", **context)
 
     def render_hint_library(error: str | None = None) -> str:
@@ -167,14 +189,13 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
     @app.route("/admin/login", methods=["GET", "POST"])
     def admin_login() -> str | Response:
         if request.method == "POST":
-            if secrets.compare_digest(
-                request.form.get("password", ""),
-                app.config["ADMIN_PASSWORD"],
-            ):
+            if password_is_valid(request.form.get("password", "")):
+                _password_hash, session_version = get_admin_credentials(database_path)
                 locale = g.locale
                 session.clear()
                 session["locale"] = locale
                 session["admin"] = True
+                session["admin_session_version"] = session_version
                 session["csrf_token"] = secrets.token_urlsafe(32)
                 return redirect(url_for("admin"))
             return (
@@ -184,7 +205,10 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                 ),
                 401,
             )
-        return render_template("login.html")
+        return render_template(
+            "login.html",
+            password_changed=request.args.get("password_changed") == "1",
+        )
 
     @app.post("/admin/logout")
     def admin_logout() -> Response:
@@ -195,7 +219,8 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
 
     @app.get("/admin")
     def admin() -> str | Response:
-        if not session.get("admin"):
+        if not admin_session_is_valid():
+            session.clear()
             return redirect(url_for("admin_login"))
         return render_admin_page()
 
@@ -230,6 +255,33 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             runtime.publish(settings)
             return redirect(url_for("settings"))
         return render_settings_page()
+
+    @app.post("/admin/settings/password")
+    def change_admin_password() -> str | Response:
+        require_admin()
+        require_csrf()
+        current_password = request.form.get("current_password", "")
+        new_password = request.form.get("new_password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        if not password_is_valid(current_password):
+            return render_settings_page(
+                password_error=translate(g.locale, "settings.password_current_invalid")
+            ), 400
+        if len(new_password) < 12:
+            return render_settings_page(
+                password_error=translate(g.locale, "settings.password_too_short")
+            ), 400
+        if new_password != confirm_password:
+            return render_settings_page(
+                password_error=translate(g.locale, "settings.password_mismatch")
+            ), 400
+        if password_is_valid(new_password):
+            return render_settings_page(
+                password_error=translate(g.locale, "settings.password_unchanged")
+            ), 400
+        update_admin_password(database_path, generate_password_hash(new_password))
+        session.clear()
+        return redirect(url_for("admin_login", password_changed=1))
 
     @app.get("/admin/stats")
     def statistics() -> str:
