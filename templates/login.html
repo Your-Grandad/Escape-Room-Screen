@@ -13,10 +13,12 @@
       {% if error %}<p class="error">{{ error }}</p>{% endif %}
       <form method="post">
         <label>{{ t("login.username") }} <input name="username" autocomplete="username" required autofocus></label>
-        <label>{{ t("login.password") }} <input name="password" type="password" autocomplete="current-password" required></label>
+        <label>{{ t("login.password") }} <input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
+        <label><input id="show-password" type="checkbox"> {{ t("login.show_password") }}</label>
         <button type="submit">{{ t("login.sign_in") }}</button>
       </form>
       {% include "includes/language_selector.html" %}
     </main>
+    <script src="{{ url_for('static', filename='login.js', v='1') }}"></script>
   </body>
 </html>

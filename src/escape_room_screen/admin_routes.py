@@ -77,7 +77,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         )
 
     def valid_password_or_error(password: str, confirmation: str) -> str | None:
-        if len(password) < 12:
+        if len(password) < 8:
             return translate(g.locale, "settings.password_too_short")
         if password != confirmation:
             return translate(g.locale, "settings.password_mismatch")

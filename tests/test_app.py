@@ -135,6 +135,16 @@ class HomeScreenTests(unittest.TestCase):
         self.assertIn(b"Home screen", response.data)
         self.assertNotIn(b'class="language-selector"', response.data)
 
+    def test_login_can_reveal_the_entered_password(self) -> None:
+        response = self.client.get("/admin/login")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'id="login-password"', response.data)
+        self.assertIn(b'id="show-password" type="checkbox"', response.data)
+        self.assertIn(b"Show password", response.data)
+        script = self.client.get("/static/login.js")
+        self.assertIn(b'showPassword.checked ? "text" : "password"', script.data)
+
     def test_supported_locale_is_rendered_and_saved_for_the_current_session(self) -> None:
         response = self.client.get("/?locale=es")
 
@@ -300,7 +310,7 @@ class HomeScreenTests(unittest.TestCase):
                     "new_password": "short",
                     "confirm_password": "short",
                 },
-                b"The new password must be at least 12 characters.",
+                b"The new password must be at least 8 characters.",
             ),
             (
                 {
@@ -415,10 +425,10 @@ class HomeScreenTests(unittest.TestCase):
             (
                 {
                     "username": "operator",
-                    "password": "short",
-                    "confirm_password": "short",
+                    "password": "1234567",
+                    "confirm_password": "1234567",
                 },
-                b"at least 12 characters",
+                b"at least 8 characters",
             ),
             (
                 {
@@ -441,8 +451,8 @@ class HomeScreenTests(unittest.TestCase):
         create_data = {
             "csrf_token": csrf_token,
             "username": "operator",
-            "password": "operator-password",
-            "confirm_password": "operator-password",
+            "password": "pass1234",
+            "confirm_password": "pass1234",
         }
         self.assertEqual(self.client.post("/admin/users", data=create_data).status_code, 302)
         duplicate = self.client.post("/admin/users", data=create_data)
