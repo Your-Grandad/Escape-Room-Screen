@@ -26,10 +26,13 @@ export ADMIN_PASSWORD="choose-a-strong-password"
 poetry run flask --app escape_room_screen.app:create_app run --host=0.0.0.0
 ```
 
-`ADMIN_PASSWORD` supplies the initial password. An administrator can replace
-it under **Settings > Change admin password**. The replacement is securely
-hashed in the application database, persists across restarts, and signs out
-all existing admin sessions.
+`ADMIN_PASSWORD` supplies the initial password for the `admin` superuser.
+Sign in with username `admin`. The superuser can create standard users under
+**Settings > Users**; standard users can use all room controls and settings
+but cannot manage accounts. Each user can replace their own password under
+**Settings > Change admin password**. Passwords are securely hashed in the
+application database, persist across restarts, and password changes sign out
+that user's existing sessions.
 
 Open `http://<pi-address>:5000/` in Chromium's kiosk mode on the Pi. Browse to
 `http://<pi-address>:5000/admin` from an authorised device to log in and alter

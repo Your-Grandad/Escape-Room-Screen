@@ -94,7 +94,7 @@ class HomeScreenTests(unittest.TestCase):
     def login_client(self, client: FlaskClient) -> str:
         response = client.post(
             "/admin/login",
-            data={"password": "test-password"},
+            data={"username": "admin", "password": "test-password"},
             follow_redirects=True,
         )
         self.assertEqual(response.status_code, 200)
@@ -260,14 +260,14 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(
             self.client.post(
                 "/admin/login",
-                data={"password": "test-password"},
+                data={"username": "admin", "password": "test-password"},
             ).status_code,
             401,
         )
         self.assertEqual(
             self.client.post(
                 "/admin/login",
-                data={"password": "new-test-password"},
+                data={"username": "admin", "password": "new-test-password"},
             ).status_code,
             302,
         )
@@ -278,7 +278,7 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(
             restarted_client.post(
                 "/admin/login",
-                data={"password": "new-test-password"},
+                data={"username": "admin", "password": "new-test-password"},
             ).status_code,
             302,
         )
@@ -370,6 +370,178 @@ class HomeScreenTests(unittest.TestCase):
             },
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_superuser_can_create_a_standard_user(self) -> None:
+        csrf_token = self.login()
+        response = self.client.post(
+            "/admin/users",
+            data={
+                "csrf_token": csrf_token,
+                "username": "operator.one",
+                "password": "operator-password",
+                "confirm_password": "operator-password",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/admin/users")
+        users_page = self.client.get("/admin/users")
+        self.assertIn(b"operator.one", users_page.data)
+        self.assertIn(b"Standard user", users_page.data)
+
+        operator_client = self.app.test_client()
+        login_response = operator_client.post(
+            "/admin/login",
+            data={"username": "operator.one", "password": "operator-password"},
+            follow_redirects=True,
+        )
+        self.assertEqual(login_response.status_code, 200)
+        self.assertIn(b"Signed in as operator.one", login_response.data)
+        self.assertNotIn(b">Users</a>", login_response.data)
+        self.assertEqual(operator_client.get("/admin/users").status_code, 403)
+
+    def test_user_creation_validates_username_password_and_duplicates(self) -> None:
+        csrf_token = self.login()
+        cases = (
+            (
+                {
+                    "username": "not valid",
+                    "password": "operator-password",
+                    "confirm_password": "operator-password",
+                },
+                b"Usernames must be",
+            ),
+            (
+                {
+                    "username": "operator",
+                    "password": "short",
+                    "confirm_password": "short",
+                },
+                b"at least 12 characters",
+            ),
+            (
+                {
+                    "username": "operator",
+                    "password": "operator-password",
+                    "confirm_password": "different-password",
+                },
+                b"do not match",
+            ),
+        )
+        for form_data, expected_error in cases:
+            with self.subTest(expected_error=expected_error):
+                response = self.client.post(
+                    "/admin/users",
+                    data={"csrf_token": csrf_token, **form_data},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(expected_error, response.data)
+
+        create_data = {
+            "csrf_token": csrf_token,
+            "username": "operator",
+            "password": "operator-password",
+            "confirm_password": "operator-password",
+        }
+        self.assertEqual(self.client.post("/admin/users", data=create_data).status_code, 302)
+        duplicate = self.client.post("/admin/users", data=create_data)
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertIn(b"already exists", duplicate.data)
+
+    def test_superuser_can_reset_and_delete_a_standard_user(self) -> None:
+        csrf_token = self.login()
+        self.client.post(
+            "/admin/users",
+            data={
+                "csrf_token": csrf_token,
+                "username": "operator",
+                "password": "operator-password",
+                "confirm_password": "operator-password",
+            },
+        )
+        with closing(connect(self.database_path)) as connection:
+            user_id = connection.execute(
+                "SELECT id FROM admin_users WHERE username = 'operator'"
+            ).fetchone()["id"]
+
+        operator_client = self.app.test_client()
+        self.assertEqual(
+            operator_client.post(
+                "/admin/login",
+                data={"username": "operator", "password": "operator-password"},
+            ).status_code,
+            302,
+        )
+        reset_response = self.client.post(
+            f"/admin/users/{user_id}/password",
+            data={
+                "csrf_token": csrf_token,
+                "password": "replacement-password",
+                "confirm_password": "replacement-password",
+            },
+        )
+        self.assertEqual(reset_response.status_code, 302)
+        self.assertEqual(
+            operator_client.get("/admin", follow_redirects=False).headers["Location"],
+            "/admin/login",
+        )
+        self.assertEqual(
+            operator_client.post(
+                "/admin/login",
+                data={"username": "operator", "password": "operator-password"},
+            ).status_code,
+            401,
+        )
+        self.assertEqual(
+            operator_client.post(
+                "/admin/login",
+                data={"username": "operator", "password": "replacement-password"},
+            ).status_code,
+            302,
+        )
+
+        delete_response = self.client.post(
+            f"/admin/users/{user_id}/delete",
+            data={"csrf_token": csrf_token},
+        )
+        self.assertEqual(delete_response.status_code, 302)
+        self.assertEqual(
+            operator_client.post(
+                "/admin/login",
+                data={"username": "operator", "password": "replacement-password"},
+            ).status_code,
+            401,
+        )
+
+    def test_standard_user_cannot_manage_users(self) -> None:
+        csrf_token = self.login()
+        self.client.post(
+            "/admin/users",
+            data={
+                "csrf_token": csrf_token,
+                "username": "operator",
+                "password": "operator-password",
+                "confirm_password": "operator-password",
+            },
+        )
+        operator_client = self.app.test_client()
+        operator_client.post(
+            "/admin/login",
+            data={"username": "operator", "password": "operator-password"},
+        )
+        with operator_client.session_transaction() as operator_session:
+            operator_csrf = operator_session["csrf_token"]
+        response = operator_client.post(
+            "/admin/users",
+            data={
+                "csrf_token": operator_csrf,
+                "username": "forbidden-user",
+                "password": "forbidden-password",
+                "confirm_password": "forbidden-password",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
 
     def test_settings_page_accepts_valid_background_image(self) -> None:
         csrf_token = self.login()

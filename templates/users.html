@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="{{ current_locale }}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ t("users.title") }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='2') }}">
+  </head>
+  <body class="admin-page">
+    <main class="panel">
+      {% include "includes/admin_navigation.html" %}
+      <div class="panel-header">
+        <h1>{{ t("users.title") }}</h1>
+      </div>
+      <p>{{ t("users.description") }}</p>
+      {% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+      <section>
+        <h2>{{ t("users.add") }}</h2>
+        <form method="post">
+          <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+          <label>{{ t("users.username") }} <input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_.-]+" autocomplete="off" required></label>
+          <label>{{ t("users.password") }} <input name="password" type="password" minlength="12" autocomplete="new-password" required></label>
+          <label>{{ t("users.confirm_password") }} <input name="confirm_password" type="password" minlength="12" autocomplete="new-password" required></label>
+          <button type="submit">{{ t("users.create") }}</button>
+        </form>
+      </section>
+
+      <section>
+        <h2>{{ t("users.existing") }}</h2>
+        {% for user in users %}
+          <article class="control-card">
+            <h3>{{ user.username }}</h3>
+            <p>{{ t("users.superuser") if user.is_superuser else t("users.standard_user") }}</p>
+            {% if user.id != session.admin_user_id %}
+              <form action="{{ url_for('reset_user_password', user_id=user.id) }}" method="post">
+                <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+                <label>{{ t("users.new_password") }} <input name="password" type="password" minlength="12" autocomplete="new-password" required></label>
+                <label>{{ t("users.confirm_password") }} <input name="confirm_password" type="password" minlength="12" autocomplete="new-password" required></label>
+                <button type="submit">{{ t("users.reset_password") }}</button>
+              </form>
+            {% endif %}
+            {% if not user.is_superuser %}
+              <form action="{{ url_for('delete_user', user_id=user.id) }}" method="post">
+                <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+                <button type="submit">{{ t("users.delete") }}</button>
+              </form>
+            {% endif %}
+          </article>
+        {% endfor %}
+      </section>
+      {% include "includes/language_selector.html" %}
+    </main>
+    {% include "includes/admin_scripts.html" %}
+  </body>
+</html>

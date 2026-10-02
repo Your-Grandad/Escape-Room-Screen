@@ -115,9 +115,12 @@ from the same computer.
 
 Press `Ctrl+C` in the server terminal to stop the application.
 
-After signing in, the admin password can be changed under **Settings > Change
-admin password**. The changed password is stored securely in the local
-database and takes precedence over the `ADMIN_PASSWORD` environment variable.
+Sign in initially with username `admin` and the configured `ADMIN_PASSWORD`.
+This account is the superuser and can create, reset, and delete standard
+users under **Settings > Users**. Standard users can use all room controls and
+settings but cannot manage accounts. Each user's changed password is stored
+securely in the local database; the `admin` user's stored password takes
+precedence over the `ADMIN_PASSWORD` environment variable.
 
 ## Local data
 
