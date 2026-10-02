@@ -10,9 +10,9 @@ from unittest.mock import MagicMock, patch
 from flask import Flask
 from flask.testing import FlaskClient
 
-from pi_home_screen import create_app
-from pi_home_screen.database import connect
-from pi_home_screen.gpio import GpioController
+from escape_room_screen import create_app
+from escape_room_screen.database import connect
+from escape_room_screen.gpio import GpioController
 
 
 class FakeOutputGpioController:
@@ -102,7 +102,7 @@ class HomeScreenTests(unittest.TestCase):
             return session["csrf_token"]
 
     def create_gpio_output_action_app(self) -> tuple[Flask, FlaskClient]:
-        with patch("pi_home_screen.app.GpioController", FakeOutputGpioController):
+        with patch("escape_room_screen.app.GpioController", FakeOutputGpioController):
             app = self.create_test_app(
                 DATABASE=str(
                     Path(self.temporary_directory.name) / "gpio-output-actions.db"
@@ -116,7 +116,7 @@ class HomeScreenTests(unittest.TestCase):
         self,
         **overrides: object,
     ) -> tuple[Flask, FlaskClient]:
-        with patch("pi_home_screen.app.GpioController", FakeOutputGpioController):
+        with patch("escape_room_screen.app.GpioController", FakeOutputGpioController):
             app = self.create_test_app(
                 DATABASE=str(
                     Path(self.temporary_directory.name) / "gpio-trigger-events.db"
@@ -554,8 +554,8 @@ class HomeScreenTests(unittest.TestCase):
 
     def test_direct_gpio_outputs_are_reused_and_reject_input_pins(self) -> None:
         with (
-            patch("pi_home_screen.gpio.OutputDevice") as output_device,
-            patch("pi_home_screen.gpio.Button", return_value=MagicMock()),
+            patch("escape_room_screen.gpio.OutputDevice") as output_device,
+            patch("escape_room_screen.gpio.Button", return_value=MagicMock()),
         ):
             controller = GpioController()
             controller.activate_pin(18)
@@ -629,7 +629,7 @@ class HomeScreenTests(unittest.TestCase):
             )
             connection.commit()
 
-        with patch("pi_home_screen.app.GpioController", FakeOutputGpioController):
+        with patch("escape_room_screen.app.GpioController", FakeOutputGpioController):
             app = self.create_test_app(
                 DATABASE=str(legacy_database),
                 GPIO_OUTPUTS={"buzzer": 17},
@@ -708,7 +708,7 @@ class HomeScreenTests(unittest.TestCase):
             def close(self) -> None:
                 pass
 
-        with patch("pi_home_screen.app.GpioController", FakeGpioController):
+        with patch("escape_room_screen.app.GpioController", FakeGpioController):
             app = create_app(
                 {
                     "TESTING": True,
@@ -1122,7 +1122,7 @@ class HomeScreenTests(unittest.TestCase):
         library_page = self.client.get("/admin/hints")
         self.assertIn(b"Padlock clue", library_page.data)
         self.assertIn(b"full screen", library_page.data)
-        from pi_home_screen.display import DisplaySettingsStore
+        from escape_room_screen.display import DisplaySettingsStore
 
         store = DisplaySettingsStore(str(Path(self.temporary_directory.name) / "screen.db"))
         preset = store.get_hint_presets()[0]

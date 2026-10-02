@@ -1,7 +1,7 @@
 [project]
-name = "pi-home-screen"
+name = "escape-room-screen"
 version = "0.1.0"
-description = ""
+description = "Raspberry Pi kiosk display and control panel for escape rooms"
 authors = [
     {name = "Alex Barber",email = "alex8mpn@gmail.com"}
 ]
@@ -14,8 +14,8 @@ dependencies = [
 ]
 
 [tool.poetry]
-packages = [{include = "pi_home_screen", from = "src"}]
-include = [{path = "src/pi_home_screen/translations/*.json", format = ["sdist", "wheel"]}]
+packages = [{include = "escape_room_screen", from = "src"}]
+include = [{path = "src/escape_room_screen/translations/*.json", format = ["sdist", "wheel"]}]
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

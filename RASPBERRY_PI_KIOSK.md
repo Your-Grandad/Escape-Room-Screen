@@ -1,4 +1,4 @@
-# Raspberry Pi Zero W Lite Kiosk Setup
+# Escape Room Screen Raspberry Pi Kiosk Setup
 
 This guide documents deployment on Raspberry Pi OS Lite (64-bit), using a
 minimal X11 session instead of a desktop environment. A **Raspberry Pi Zero 2
@@ -26,7 +26,7 @@ capabilities that those boards do not provide.
 
 ## 1. Flash and boot Raspberry Pi OS Lite
 
-Use Raspberry Pi Imager to write **Raspberry Pi OS Lite (32-bit)** to a
+Use Raspberry Pi Imager to write **Raspberry Pi OS Lite (64-bit)** to a
 microSD card. Before writing, configure a hostname, Wi-Fi country and
 credentials, an administrator account, and SSH.
 
@@ -81,8 +81,8 @@ Do not add `kiosk` to `sudo`.
 
 ```bash
 sudo -u kiosk -H git clone \
-  https://github.com/alexjhbarber/pi-home-screen.git \
-  /home/kiosk/pi-home-screen
+  https://github.com/Your-Grandad/Escape-Room-Screen.git \
+  /home/kiosk/escape-room-screen
 ```
 
 ## 5. Install Poetry and application dependencies
@@ -101,7 +101,7 @@ Install the project's locked dependencies:
 
 ```bash
 sudo -u kiosk -H bash -c '
-  cd /home/kiosk/pi-home-screen
+  cd /home/kiosk/escape-room-screen
   /home/kiosk/.local/bin/poetry env use python3
   /home/kiosk/.local/bin/poetry install --only main
 '
@@ -118,10 +118,10 @@ python3 --version
 Create a protected environment file:
 
 ```bash
-sudo install -d -m 0750 -o kiosk -g kiosk /etc/pi-home-screen
+sudo install -d -m 0750 -o kiosk -g kiosk /etc/escape-room-screen
 SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
 
-sudo tee /etc/pi-home-screen/environment >/dev/null <<EOF
+sudo tee /etc/escape-room-screen/environment >/dev/null <<EOF
 SECRET_KEY=${SECRET_KEY}
 ADMIN_PASSWORD=replace-this-with-a-long-unique-password
 
@@ -133,22 +133,22 @@ ADMIN_PASSWORD=replace-this-with-a-long-unique-password
 # GPIO_INPUTS={"complete-room":17,"display-toggle":27}
 EOF
 
-sudo chown kiosk:kiosk /etc/pi-home-screen/environment
-sudo chmod 0600 /etc/pi-home-screen/environment
+sudo chown kiosk:kiosk /etc/escape-room-screen/environment
+sudo chmod 0600 /etc/escape-room-screen/environment
 ```
 
 Replace `ADMIN_PASSWORD` before starting the service:
 
 ```bash
-sudo nano /etc/pi-home-screen/environment
+sudo nano /etc/escape-room-screen/environment
 ```
 
 ## 7. Create and start the web application service
 
 ```bash
-sudo tee /etc/systemd/system/pi-home-screen.service >/dev/null <<'EOF'
+sudo tee /etc/systemd/system/escape-room-screen.service >/dev/null <<'EOF'
 [Unit]
-Description=Pi Home Screen
+Description=Escape Room Screen
 Wants=network-online.target
 After=network-online.target
 
@@ -156,11 +156,11 @@ After=network-online.target
 Type=simple
 User=kiosk
 Group=kiosk
-WorkingDirectory=/home/kiosk/pi-home-screen
-EnvironmentFile=/etc/pi-home-screen/environment
+WorkingDirectory=/home/kiosk/escape-room-screen
+EnvironmentFile=/etc/escape-room-screen/environment
 Environment=HOME=/home/kiosk
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/kiosk/.local/bin/poetry run flask --app pi_home_screen.app:create_app run --host=0.0.0.0 --port=5000
+ExecStart=/home/kiosk/.local/bin/poetry run flask --app escape_room_screen.app:create_app run --host=0.0.0.0 --port=5000
 Restart=on-failure
 RestartSec=5
 
@@ -169,10 +169,10 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now pi-home-screen.service
+sudo systemctl enable --now escape-room-screen.service
 ```
 
-Wait at least 40 seconds on an original Pi Zero W, then test:
+Wait at least 40 seconds on a Pi Zero 2 W, then test:
 
 ```bash
 curl -I --max-time 10 http://127.0.0.1:5000/
@@ -212,7 +212,6 @@ exec /usr/bin/chromium \
   --noerrdialogs \
   --disable-infobars \
   --disable-session-crashed-bubble \
-  --autoplay-policy=no-user-gesture-required \
   --autoplay-policy=no-user-gesture-required \
   --alsa-output-device=hdmi:CARD=vc4hdmi,DEV=0 \
   --start-maximized \
@@ -334,11 +333,11 @@ If the command is missing:
 ```bash
 sudo apt update
 sudo apt install -y libraspberrypi-bin
-sudo systemctl restart pi-home-screen.service
+sudo systemctl restart escape-room-screen.service
 ```
 
 To connect a physical monitor toggle button, set this in
-`/etc/pi-home-screen/environment`:
+`/etc/escape-room-screen/environment`:
 
 ```ini
 GPIO_INPUTS={"display-toggle":17}
@@ -349,7 +348,7 @@ button wiring. Apply the environment change with:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart pi-home-screen.service
+sudo systemctl restart escape-room-screen.service
 ```
 
 The web control and GPIO control both toggle the same HDMI output. The
@@ -392,7 +391,7 @@ Python 3.11 through Python 3.x. Pull the updated project and run:
 
 ```bash
 sudo -u kiosk -H bash -c '
-  cd /home/kiosk/pi-home-screen
+  cd /home/kiosk/escape-room-screen
   /home/kiosk/.local/bin/poetry env use python3
   /home/kiosk/.local/bin/poetry install --only main
 '
@@ -405,7 +404,7 @@ then reload and restart it:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart pi-home-screen.service
+sudo systemctl restart escape-room-screen.service
 ```
 
 ### `startx: command not found`
@@ -447,7 +446,7 @@ sudo -u kiosk vcgencmd display_power
 ```
 
 Install `libraspberrypi-bin` if necessary, then restart
-`pi-home-screen.service`.
+`escape-room-screen.service`.
 
 The expected command path is `/usr/bin/startx`. Do not run `startx` through
 SSH; it must start from the kiosk account's automatic login on the Pi's local
@@ -538,7 +537,7 @@ then reinstall the locked dependencies:
 
 ```bash
 sudo -u kiosk -H bash -c '
-  cd /home/kiosk/pi-home-screen
+  cd /home/kiosk/escape-room-screen
   /home/kiosk/.local/bin/poetry install --only main
 '
 ```
@@ -553,18 +552,18 @@ To restore the display without deleting display settings, remove only the
 blocked input mapping, then restart:
 
 ```bash
-sudo systemctl stop pi-home-screen.service
+sudo systemctl stop escape-room-screen.service
 
 sudo -u kiosk -H python3 -c '
 import sqlite3
-database = "/home/kiosk/pi-home-screen/src/instance/home_screen.db"
+database = "/home/kiosk/escape-room-screen/src/instance/home_screen.db"
 connection = sqlite3.connect(database)
 connection.execute("DELETE FROM gpio_mappings WHERE pin = ?", (18,))
 connection.commit()
 print("Removed BCM GPIO 18 mapping.")
 '
 
-sudo systemctl start pi-home-screen.service
+sudo systemctl start escape-room-screen.service
 ```
 
 Rewire the input to an unused BCM pin, such as GPIO 17 (physical pin 11), and
@@ -573,23 +572,23 @@ while resolving pin conflicts.
 
 > [!NOTE]
 > Flask stores its database at
-> `/home/kiosk/pi-home-screen/src/instance/home_screen.db`, not at
-> `/home/kiosk/pi-home-screen/instance/home_screen.db`.
+> `/home/kiosk/escape-room-screen/src/instance/home_screen.db`, not at
+> `/home/kiosk/escape-room-screen/instance/home_screen.db`.
 
 ## Maintenance
 
 ```bash
 # Follow application logs.
-sudo journalctl -u pi-home-screen.service -f
+sudo journalctl -u escape-room-screen.service -f
 
 # Restart after configuration or application changes.
-sudo systemctl restart pi-home-screen.service
+sudo systemctl restart escape-room-screen.service
 
 # Update from Git, then restart.
 sudo -u kiosk -H bash -c '
-  cd /home/kiosk/pi-home-screen
+  cd /home/kiosk/escape-room-screen
   git pull --ff-only
   /home/kiosk/.local/bin/poetry install --only main
 '
-sudo systemctl restart pi-home-screen.service
+sudo systemctl restart escape-room-screen.service
 ```
