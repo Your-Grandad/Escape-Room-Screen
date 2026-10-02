@@ -9,6 +9,7 @@
   <body class="admin-page">
     <main class="panel login-panel">
       <h1>{{ t("login.title") }}</h1>
+      {% if password_changed %}<p>{{ t("login.password_changed") }}</p>{% endif %}
       {% if error %}<p class="error">{{ error }}</p>{% endif %}
       <form method="post">
         <label>{{ t("login.password") }} <input name="password" type="password" required autofocus></label>

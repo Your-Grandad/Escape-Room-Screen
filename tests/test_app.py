@@ -236,6 +236,140 @@ class HomeScreenTests(unittest.TestCase):
         self.assertIn(b'id="background-preview"', response.data)
         self.assertIn(b"Accept background colour", response.data)
         self.assertIn(b'class="language-selector"', response.data)
+        self.assertIn(b"Change admin password", response.data)
+        self.assertIn(b'name="current_password"', response.data)
+
+    def test_admin_password_can_be_changed_and_persists(self) -> None:
+        csrf_token = self.login()
+        response = self.client.post(
+            "/admin/settings/password",
+            data={
+                "csrf_token": csrf_token,
+                "current_password": "test-password",
+                "new_password": "new-test-password",
+                "confirm_password": "new-test-password",
+            },
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers["Location"],
+            "/admin/login?password_changed=1",
+        )
+        self.assertEqual(
+            self.client.post(
+                "/admin/login",
+                data={"password": "test-password"},
+            ).status_code,
+            401,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/admin/login",
+                data={"password": "new-test-password"},
+            ).status_code,
+            302,
+        )
+
+        restarted_app = self.create_test_app()
+        self.addCleanup(restarted_app.extensions["gpio"].close)
+        restarted_client = restarted_app.test_client()
+        self.assertEqual(
+            restarted_client.post(
+                "/admin/login",
+                data={"password": "new-test-password"},
+            ).status_code,
+            302,
+        )
+
+    def test_admin_password_change_validates_input(self) -> None:
+        csrf_token = self.login()
+        cases = (
+            (
+                {
+                    "current_password": "wrong-password",
+                    "new_password": "new-test-password",
+                    "confirm_password": "new-test-password",
+                },
+                b"The current password is incorrect.",
+            ),
+            (
+                {
+                    "current_password": "test-password",
+                    "new_password": "short",
+                    "confirm_password": "short",
+                },
+                b"The new password must be at least 12 characters.",
+            ),
+            (
+                {
+                    "current_password": "test-password",
+                    "new_password": "new-test-password",
+                    "confirm_password": "different-password",
+                },
+                b"The new passwords do not match.",
+            ),
+            (
+                {
+                    "current_password": "test-password",
+                    "new_password": "test-password",
+                    "confirm_password": "test-password",
+                },
+                b"The new password must be different",
+            ),
+        )
+
+        for form_data, expected_error in cases:
+            with self.subTest(expected_error=expected_error):
+                response = self.client.post(
+                    "/admin/settings/password",
+                    data={"csrf_token": csrf_token, **form_data},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(expected_error, response.data)
+
+    def test_password_change_invalidates_other_admin_sessions(self) -> None:
+        csrf_token = self.login()
+        other_client = self.app.test_client()
+        self.login_client(other_client)
+
+        response = self.client.post(
+            "/admin/settings/password",
+            data={
+                "csrf_token": csrf_token,
+                "current_password": "test-password",
+                "new_password": "new-test-password",
+                "confirm_password": "new-test-password",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        other_response = other_client.get("/admin", follow_redirects=False)
+        self.assertEqual(other_response.status_code, 302)
+        self.assertEqual(other_response.headers["Location"], "/admin/login")
+
+    def test_password_change_requires_admin_and_csrf(self) -> None:
+        response = self.client.post(
+            "/admin/settings/password",
+            data={
+                "current_password": "test-password",
+                "new_password": "new-test-password",
+                "confirm_password": "new-test-password",
+            },
+        )
+        self.assertEqual(response.status_code, 401)
+
+        self.login()
+        response = self.client.post(
+            "/admin/settings/password",
+            data={
+                "current_password": "test-password",
+                "new_password": "new-test-password",
+                "confirm_password": "new-test-password",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
 
     def test_settings_page_accepts_valid_background_image(self) -> None:
         csrf_token = self.login()

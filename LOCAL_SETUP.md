@@ -115,6 +115,10 @@ from the same computer.
 
 Press `Ctrl+C` in the server terminal to stop the application.
 
+After signing in, the admin password can be changed under **Settings > Change
+admin password**. The changed password is stored securely in the local
+database and takes precedence over the `ADMIN_PASSWORD` environment variable.
+
 ## Local data
 
 Settings, statistics, and uploaded sounds are stored under `src/instance/`.

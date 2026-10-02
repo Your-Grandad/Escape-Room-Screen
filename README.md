@@ -26,6 +26,11 @@ export ADMIN_PASSWORD="choose-a-strong-password"
 poetry run flask --app escape_room_screen.app:create_app run --host=0.0.0.0
 ```
 
+`ADMIN_PASSWORD` supplies the initial password. An administrator can replace
+it under **Settings > Change admin password**. The replacement is securely
+hashed in the application database, persists across restarts, and signs out
+all existing admin sessions.
+
 Open `http://<pi-address>:5000/` in Chromium's kiosk mode on the Pi. Browse to
 `http://<pi-address>:5000/admin` from an authorised device to log in and alter
 the title, message, and colours. Changes are stored in SQLite and pushed to
