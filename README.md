@@ -14,6 +14,10 @@ cd Escape-Room-Screen
 poetry install
 ```
 
+For complete platform-specific instructions, see
+[Running on Windows and Linux](LOCAL_SETUP.md). For a dedicated Raspberry Pi
+kiosk, see [Raspberry Pi deployment](RASPBERRY_PI_KIOSK.md).
+
 Set a unique Flask signing key and the admin password, then start the app:
 
 ```bash
