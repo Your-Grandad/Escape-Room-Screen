@@ -116,6 +116,24 @@ def initialize(database_path: Path | str) -> None:
 
             INSERT INTO admin_credentials (id) VALUES (1)
             ON CONFLICT(id) DO NOTHING;
+
+            CREATE TABLE IF NOT EXISTS admin_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                password_hash TEXT,
+                is_superuser INTEGER NOT NULL DEFAULT 0,
+                session_version INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            INSERT INTO admin_users (
+                username, password_hash, is_superuser, session_version
+            )
+            SELECT 'admin', password_hash, 1, session_version
+            FROM admin_credentials
+            WHERE id = 1
+            ON CONFLICT(username) DO NOTHING;
             """
         )
         existing_columns = {
@@ -210,36 +228,93 @@ def initialize(database_path: Path | str) -> None:
         connection.commit()
 
 
-def get_admin_credentials(database_path: Path | str) -> tuple[str | None, int]:
+def get_admin_user_by_username(
+    database_path: Path | str,
+    username: str,
+) -> sqlite3.Row | None:
     with closing(connect(database_path)) as connection:
-        row = connection.execute(
+        return connection.execute(
             """
-            SELECT password_hash, session_version
-            FROM admin_credentials
-            WHERE id = 1
-            """
+            SELECT id, username, password_hash, is_superuser, session_version
+            FROM admin_users
+            WHERE username = ?
+            """,
+            (username,),
         ).fetchone()
-    if row is None:
-        raise RuntimeError("Admin credentials are not initialized.")
-    return row["password_hash"], row["session_version"]
 
 
-def update_admin_password(database_path: Path | str, password_hash: str) -> int:
+def get_admin_user(database_path: Path | str, user_id: int) -> sqlite3.Row | None:
     with closing(connect(database_path)) as connection:
-        connection.execute(
+        return connection.execute(
             """
-            UPDATE admin_credentials
+            SELECT id, username, password_hash, is_superuser, session_version
+            FROM admin_users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+
+
+def list_admin_users(database_path: Path | str) -> list[sqlite3.Row]:
+    with closing(connect(database_path)) as connection:
+        return connection.execute(
+            """
+            SELECT id, username, is_superuser, created_at
+            FROM admin_users
+            ORDER BY is_superuser DESC, username COLLATE NOCASE
+            """
+        ).fetchall()
+
+
+def create_admin_user(
+    database_path: Path | str,
+    username: str,
+    password_hash: str,
+) -> None:
+    try:
+        with closing(connect(database_path)) as connection:
+            connection.execute(
+                """
+                INSERT INTO admin_users (username, password_hash)
+                VALUES (?, ?)
+                """,
+                (username, password_hash),
+            )
+            connection.commit()
+    except sqlite3.IntegrityError as error:
+        raise ValueError("A user with that username already exists.") from error
+
+
+def update_admin_user_password(
+    database_path: Path | str,
+    user_id: int,
+    password_hash: str,
+) -> None:
+    with closing(connect(database_path)) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE admin_users
             SET password_hash = ?,
                 session_version = session_version + 1,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE id = 1
+            WHERE id = ?
             """,
-            (password_hash,),
+            (password_hash, user_id),
         )
-        row = connection.execute(
-            "SELECT session_version FROM admin_credentials WHERE id = 1"
-        ).fetchone()
         connection.commit()
-    if row is None:
-        raise RuntimeError("Admin credentials are not initialized.")
-    return row["session_version"]
+    if cursor.rowcount != 1:
+        raise ValueError("User not found.")
+
+
+def delete_admin_user(database_path: Path | str, user_id: int) -> None:
+    with closing(connect(database_path)) as connection:
+        user = connection.execute(
+            "SELECT is_superuser FROM admin_users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        if user is None:
+            raise ValueError("User not found.")
+        if user["is_superuser"]:
+            raise ValueError("The superuser cannot be deleted.")
+        connection.execute("DELETE FROM admin_users WHERE id = ?", (user_id,))
+        connection.commit()

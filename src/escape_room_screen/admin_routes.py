@@ -1,5 +1,6 @@
 import secrets
 import subprocess
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,7 +18,14 @@ from flask import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from .database import get_admin_credentials, update_admin_password
+from .database import (
+    create_admin_user,
+    delete_admin_user,
+    get_admin_user,
+    get_admin_user_by_username,
+    list_admin_users,
+    update_admin_user_password,
+)
 from .runtime import DisplayRuntime
 from .localization import translate
 from .uploads import (
@@ -35,11 +43,17 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
     upload_folder = Path(app.config["UPLOAD_FOLDER"])
     database_path = Path(app.config["DATABASE"])
 
+    def current_admin_user() -> Any | None:
+        user_id = session.get("admin_user_id")
+        if not isinstance(user_id, int):
+            return None
+        return get_admin_user(database_path, user_id)
+
     def admin_session_is_valid() -> bool:
-        _password_hash, session_version = get_admin_credentials(database_path)
+        user = current_admin_user()
         return bool(
-            session.get("admin")
-            and session.get("admin_session_version") == session_version
+            user is not None
+            and session.get("admin_session_version") == user["session_version"]
         )
 
     def require_admin() -> None:
@@ -47,11 +61,27 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             session.clear()
             abort(401)
 
-    def password_is_valid(password: str) -> bool:
-        password_hash, _session_version = get_admin_credentials(database_path)
-        if password_hash is not None:
-            return check_password_hash(password_hash, password)
-        return secrets.compare_digest(password, app.config["ADMIN_PASSWORD"])
+    def require_superuser() -> None:
+        require_admin()
+        user = current_admin_user()
+        if user is None or not user["is_superuser"]:
+            abort(403)
+
+    def password_is_valid(user: Any, password: str) -> bool:
+        if user["password_hash"] is not None:
+            return check_password_hash(user["password_hash"], password)
+        return bool(
+            user["is_superuser"]
+            and user["username"].casefold() == "admin"
+            and secrets.compare_digest(password, app.config["ADMIN_PASSWORD"])
+        )
+
+    def valid_password_or_error(password: str, confirmation: str) -> str | None:
+        if len(password) < 12:
+            return translate(g.locale, "settings.password_too_short")
+        if password != confirmation:
+            return translate(g.locale, "settings.password_mismatch")
+        return None
 
     def require_csrf() -> None:
         token = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token")
@@ -155,6 +185,16 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             context["error"] = error
         return render_template("sounds.html", **context)
 
+    def render_users_page(error: str | None = None) -> str:
+        context: dict[str, Any] = {
+            "settings": store.get(),
+            "users": list_admin_users(database_path),
+            "csrf_token": csrf_token(),
+        }
+        if error is not None:
+            context["error"] = error
+        return render_template("users.html", **context)
+
     def remove_old_sound_files(
         old_settings: Any,
         notification_filename: str | None,
@@ -189,13 +229,21 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
     @app.route("/admin/login", methods=["GET", "POST"])
     def admin_login() -> str | Response:
         if request.method == "POST":
-            if password_is_valid(request.form.get("password", "")):
-                _password_hash, session_version = get_admin_credentials(database_path)
+            user = get_admin_user_by_username(
+                database_path,
+                request.form.get("username", "").strip(),
+            )
+            if user is not None and password_is_valid(
+                user,
+                request.form.get("password", ""),
+            ):
                 locale = g.locale
                 session.clear()
                 session["locale"] = locale
-                session["admin"] = True
-                session["admin_session_version"] = session_version
+                session["admin_user_id"] = user["id"]
+                session["admin_username"] = user["username"]
+                session["is_superuser"] = bool(user["is_superuser"])
+                session["admin_session_version"] = user["session_version"]
                 session["csrf_token"] = secrets.token_urlsafe(32)
                 return redirect(url_for("admin"))
             return (
@@ -263,25 +311,93 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         current_password = request.form.get("current_password", "")
         new_password = request.form.get("new_password", "")
         confirm_password = request.form.get("confirm_password", "")
-        if not password_is_valid(current_password):
+        user = current_admin_user()
+        if user is None or not password_is_valid(user, current_password):
             return render_settings_page(
                 password_error=translate(g.locale, "settings.password_current_invalid")
             ), 400
-        if len(new_password) < 12:
-            return render_settings_page(
-                password_error=translate(g.locale, "settings.password_too_short")
-            ), 400
-        if new_password != confirm_password:
-            return render_settings_page(
-                password_error=translate(g.locale, "settings.password_mismatch")
-            ), 400
-        if password_is_valid(new_password):
+        password_error = valid_password_or_error(new_password, confirm_password)
+        if password_error is not None:
+            return render_settings_page(password_error=password_error), 400
+        if password_is_valid(user, new_password):
             return render_settings_page(
                 password_error=translate(g.locale, "settings.password_unchanged")
             ), 400
-        update_admin_password(database_path, generate_password_hash(new_password))
+        update_admin_user_password(
+            database_path,
+            user["id"],
+            generate_password_hash(new_password),
+        )
         session.clear()
         return redirect(url_for("admin_login", password_changed=1))
+
+    @app.get("/admin/users")
+    def users() -> str:
+        require_superuser()
+        return render_users_page()
+
+    @app.post("/admin/users")
+    def create_user() -> str | Response:
+        require_superuser()
+        require_csrf()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        confirmation = request.form.get("confirm_password", "")
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
+            return render_users_page(
+                translate(g.locale, "users.invalid_username")
+            ), 400
+        password_error = valid_password_or_error(password, confirmation)
+        if password_error is not None:
+            return render_users_page(password_error), 400
+        try:
+            create_admin_user(
+                database_path,
+                username,
+                generate_password_hash(password),
+            )
+        except ValueError:
+            return render_users_page(
+                translate(g.locale, "users.username_exists")
+            ), 400
+        return redirect(url_for("users"))
+
+    @app.post("/admin/users/<int:user_id>/password")
+    def reset_user_password(user_id: int) -> str | Response:
+        require_superuser()
+        require_csrf()
+        user = get_admin_user(database_path, user_id)
+        if user is None:
+            abort(404)
+        if user["id"] == session["admin_user_id"]:
+            return render_users_page(
+                translate(g.locale, "users.use_personal_password_form")
+            ), 400
+        password = request.form.get("password", "")
+        confirmation = request.form.get("confirm_password", "")
+        password_error = valid_password_or_error(password, confirmation)
+        if password_error is not None:
+            return render_users_page(password_error), 400
+        update_admin_user_password(
+            database_path,
+            user_id,
+            generate_password_hash(password),
+        )
+        return redirect(url_for("users"))
+
+    @app.post("/admin/users/<int:user_id>/delete")
+    def delete_user(user_id: int) -> str | Response:
+        require_superuser()
+        require_csrf()
+        try:
+            delete_admin_user(database_path, user_id)
+        except ValueError as error:
+            if str(error) == "User not found.":
+                abort(404)
+            return render_users_page(
+                translate(g.locale, "users.cannot_delete_superuser")
+            ), 400
+        return redirect(url_for("users"))
 
     @app.get("/admin/stats")
     def statistics() -> str:

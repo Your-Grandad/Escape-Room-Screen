@@ -186,6 +186,10 @@ http://<pi-ip-address>:5000/
 http://<pi-ip-address>:5000/admin
 ```
 
+Sign in with username `admin` and the `ADMIN_PASSWORD` configured in step 6.
+The `admin` account is the superuser and can add standard operator accounts
+under **Settings > Users**.
+
 ## 8. Configure Chromium kiosk mode
 
 Create the X11 session for the kiosk account:
