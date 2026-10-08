@@ -39,6 +39,36 @@ Open `http://<pi-address>:5000/` in Chromium's kiosk mode on the Pi. Browse to
 the title, message, and colours. Changes are stored in SQLite and pushed to
 the display through Server-Sent Events without refreshing the page.
 
+Staff pages use a separate `static/admin.css` stylesheet for the navigation,
+utility forms, and responsive layouts. It is not loaded by the room display,
+so admin styling can be adjusted without changing the home screen.
+In the single-column tablet/mobile layout, Room controls and Adjust time
+appear before the announcement and hint panel; desktop keeps its two columns.
+
+Customisation stacks the starting duration below Display text, alongside Colours
+and images. Background and logo images have compact previews, including local
+previews of newly selected files before saving.
+
+Use **Settings > Dark mode** on staff pages (or the toggle on the login page)
+to switch themes. The choice is saved in that browser; without a saved choice, the
+admin interface follows the device's light/dark preference. It does not
+change the room display.
+
+The timer shows a large remaining-time readout and a separate elapsed time,
+with explicit running, paused, and result states. The remaining time is
+highlighted when five minutes or less remain, with a stronger warning in the
+last minute. Room controls label active, paused, off, and unavailable states;
+the pause-timer button is disabled until a run starts and after it ends.
+
+Set the starting timer duration in **Settings > Customisation** using hours,
+minutes, and seconds, then save the display settings. The default is 1 hour
+(60 minutes); the duration must be at least 1 second, with minutes and seconds
+between 0 and 59. The setting persists in SQLite and is used by manual and GPIO
+starts. Saving a new duration leaves the current running, paused, or finished
+session unchanged; resetting shows the saved duration for the next start.
+The room display, automatic hints/failure, and results use the current run's
+captured duration, including added time and penalties.
+
 For this built-in live-update broker, run one application worker. If the
 application later needs multiple workers or multiple Pis, replace the broker
 with a shared service such as Redis pub/sub.
@@ -53,6 +83,19 @@ Catalogs live in `src/escape_room_screen/translations/`. To add a language, copy
 `en.json` to a new locale code, translate every value, then add that code and
 optionally its display name to `SUPPORTED_LOCALES` and `LOCALE_NAMES` in
 `create_app`.
+
+## Donation widget
+
+The donation widget is shown by default. To hide it, including its external
+scripts, set this environment variable before starting the app:
+
+```bash
+export HIDE_DONATIONS=true
+```
+
+Leave `HIDE_DONATIONS` unset or set it to `false` to show the widget. The value
+`true` is case-insensitive and may have surrounding whitespace. Restart the
+app after changing the setting.
 
 ## GPIO
 
@@ -108,6 +151,12 @@ room. The home screen displays the recent GPIO activity.
 
 ```bash
 poetry run python -m unittest discover -s tests -v
+```
+
+For the client-side timer and theme checks, using Node.js:
+
+```bash
+node --test tests/admin-ui.test.cjs
 ```
 
 ## Raspberry Pi deployment

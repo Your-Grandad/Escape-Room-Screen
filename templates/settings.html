@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("settings.title") }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='6') }}">
+    {% include "includes/admin_theme_head.html" %}
   </head>
   <body class="admin-page">
     <main class="panel">
@@ -15,62 +16,95 @@
       {% if error %}<p class="error">{{ error }}</p>{% endif %}
       <form method="post" enctype="multipart/form-data">
         <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
-        <label>{{ t("settings.heading") }} <input name="title" maxlength="80" value="{{ settings.title }}" required></label>
-        <label>{{ t("settings.description") }} <textarea name="message" maxlength="500">{{ settings.message }}</textarea></label>
-        <label>{{ t("settings.completion_message") }} <textarea name="completion_message" maxlength="200" required>{{ settings.completion_message }}</textarea></label>
-        <label>{{ t("settings.failure_message") }} <textarea name="failure_message" maxlength="200" required>{{ settings.failure_message }}</textarea></label>
-        <fieldset class="colour-control">
-          <legend>{{ t("settings.background_colour") }}</legend>
-          <input id="background-picker" type="color" value="{{ settings.background_colour }}">
-          <label for="background-hex">{{ t("settings.hex_value") }}</label>
-          <input id="background-hex" name="background_colour" pattern="#[0-9a-fA-F]{6}" value="{{ settings.background_colour }}" required>
-          <button data-accept-colour="background" type="button">{{ t("settings.accept_background") }}</button>
-          <span id="background-preview" class="colour-preview" style="background: {{ settings.background_colour }}" aria-label="{{ t("settings.background_preview") }}"></span>
-        </fieldset>
-        <fieldset class="colour-control">
-          <legend>{{ t("settings.accent_colour") }}</legend>
-          <input id="accent-picker" type="color" value="{{ settings.accent_colour }}">
-          <label for="accent-hex">{{ t("settings.hex_value") }}</label>
-          <input id="accent-hex" name="accent_colour" pattern="#[0-9a-fA-F]{6}" value="{{ settings.accent_colour }}" required>
-          <button data-accept-colour="accent" type="button">{{ t("settings.accept_accent") }}</button>
-          <span id="accent-preview" class="colour-preview" style="background: {{ settings.accent_colour }}" aria-label="{{ t("settings.accent_preview") }}"></span>
-        </fieldset>
-        <label>{{ t("settings.background_image") }} <input name="background_image" accept=".gif,.jpeg,.jpg,.png,.webp,image/gif,image/jpeg,image/png,image/webp" type="file"></label>
-        {% if settings.background_image %}
-          <p>{{ t("settings.current_image") }} <a href="{{ url_for('uploaded_file', filename=settings.background_image) }}" target="_blank">{{ settings.background_image }}</a></p>
-          <label class="icon-toggle danger" title="{{ t("settings.remove_background") }}">
-            <input class="visually-hidden-control" name="remove_background_image" type="checkbox">
-            {% include "includes/icons/trash.html" %}
-            <span class="sr-only">{{ t("settings.remove_background") }}</span>
-          </label>
-        {% endif %}
-        <label>{{ t("settings.logo_image") }} <input name="logo_image" accept=".gif,.jpeg,.jpg,.png,.webp,image/gif,image/jpeg,image/png,image/webp" type="file"></label>
-        {% if settings.logo_image %}
-          <p>{{ t("settings.current_logo") }} <a href="{{ url_for('uploaded_file', filename=settings.logo_image) }}" target="_blank">{{ settings.logo_image }}</a></p>
-          <label class="icon-toggle danger" title="{{ t("settings.remove_logo") }}">
-            <input class="visually-hidden-control" name="remove_logo_image" type="checkbox">
-            {% include "includes/icons/trash.html" %}
-            <span class="sr-only">{{ t("settings.remove_logo") }}</span>
-          </label>
-        {% endif %}
-        <button type="submit">{{ t("settings.save") }}</button>
+        <div class="utility-grid">
+          <div class="settings-content-column">
+            <section class="utility-section">
+              <h2>{{ t("settings.text_section") }}</h2>
+              <label>{{ t("settings.heading") }} <input name="title" maxlength="80" value="{{ settings.title }}" required></label>
+              <label>{{ t("settings.description") }} <textarea name="message" maxlength="500">{{ settings.message }}</textarea></label>
+              <label>{{ t("settings.completion_message") }} <textarea name="completion_message" maxlength="200" required>{{ settings.completion_message }}</textarea></label>
+              <label>{{ t("settings.failure_message") }} <textarea name="failure_message" maxlength="200" required>{{ settings.failure_message }}</textarea></label>
+            </section>
+            <section class="utility-section timer-settings">
+              <h2 id="timer-duration-heading">{{ t("settings.timer_duration") }}</h2>
+              <p id="timer-duration-help">{{ t("settings.timer_duration_description") }}</p>
+              <div class="timer-duration-fields" role="group" aria-labelledby="timer-duration-heading" aria-describedby="timer-duration-help">
+                <label>{{ t("timer.hours") }} <input name="timer_hours" type="number" min="0" step="1" value="{{ settings.timer_duration_seconds // 3600 }}" inputmode="numeric" required></label>
+                <label>{{ t("timer.minutes") }} <input name="timer_minutes" type="number" min="0" max="59" step="1" value="{{ (settings.timer_duration_seconds % 3600) // 60 }}" inputmode="numeric" required></label>
+                <label>{{ t("timer.seconds") }} <input name="timer_seconds" type="number" min="0" max="59" step="1" value="{{ settings.timer_duration_seconds % 60 }}" inputmode="numeric" required></label>
+              </div>
+            </section>
+          </div>
+          <section class="utility-section settings-appearance">
+            <h2>{{ t("settings.appearance_section") }}</h2>
+            <fieldset class="colour-control">
+              <legend>{{ t("settings.background_colour") }}</legend>
+              <input id="background-picker" type="color" value="{{ settings.background_colour }}" aria-label="{{ t('settings.background_colour') }}">
+              <label for="background-hex">{{ t("settings.hex_value") }}</label>
+              <input id="background-hex" name="background_colour" pattern="#[0-9a-fA-F]{6}" value="{{ settings.background_colour }}" required>
+              <button data-accept-colour="background" type="button">{{ t("settings.accept_background") }}</button>
+              <span id="background-preview" class="colour-preview" style="background: {{ settings.background_colour }}" aria-label="{{ t("settings.background_preview") }}"></span>
+            </fieldset>
+            <fieldset class="colour-control">
+              <legend>{{ t("settings.accent_colour") }}</legend>
+              <input id="accent-picker" type="color" value="{{ settings.accent_colour }}" aria-label="{{ t('settings.accent_colour') }}">
+              <label for="accent-hex">{{ t("settings.hex_value") }}</label>
+              <input id="accent-hex" name="accent_colour" pattern="#[0-9a-fA-F]{6}" value="{{ settings.accent_colour }}" required>
+              <button data-accept-colour="accent" type="button">{{ t("settings.accept_accent") }}</button>
+              <span id="accent-preview" class="colour-preview" style="background: {{ settings.accent_colour }}" aria-label="{{ t("settings.accent_preview") }}"></span>
+            </fieldset>
+            <div class="settings-image-control">
+              <label>{{ t("settings.background_image") }} <input name="background_image" accept=".gif,.jpeg,.jpg,.png,.webp,image/gif,image/jpeg,image/png,image/webp" type="file"></label>
+              <img id="background-image-preview" class="settings-image-preview"{% if settings.background_image %} src="{{ url_for('uploaded_file', filename=settings.background_image) }}"{% else %} hidden{% endif %} alt="{{ t('settings.background_image_preview') }}">
+              <p id="background-image-preview-error" class="error" role="status" hidden>{{ t("settings.image_preview_error") }}</p>
+              {% if settings.background_image %}
+                <p>{{ t("settings.current_image") }} <a href="{{ url_for('uploaded_file', filename=settings.background_image) }}" target="_blank">{{ settings.background_image }}</a></p>
+                <label class="icon-toggle danger" title="{{ t("settings.remove_background") }}">
+                  <input class="visually-hidden-control" name="remove_background_image" type="checkbox">
+                  {% include "includes/icons/trash.html" %}
+                  <span class="sr-only">{{ t("settings.remove_background") }}</span>
+                </label>
+              {% endif %}
+            </div>
+            <div class="settings-image-control">
+              <label>{{ t("settings.logo_image") }} <input name="logo_image" accept=".gif,.jpeg,.jpg,.png,.webp,image/gif,image/jpeg,image/png,image/webp" type="file"></label>
+              <img id="logo-image-preview" class="settings-image-preview"{% if settings.logo_image %} src="{{ url_for('uploaded_file', filename=settings.logo_image) }}"{% else %} hidden{% endif %} alt="{{ t('settings.logo_image_preview') }}">
+              <p id="logo-image-preview-error" class="error" role="status" hidden>{{ t("settings.image_preview_error") }}</p>
+              {% if settings.logo_image %}
+                <p>{{ t("settings.current_logo") }} <a href="{{ url_for('uploaded_file', filename=settings.logo_image) }}" target="_blank">{{ settings.logo_image }}</a></p>
+                <label class="icon-toggle danger" title="{{ t("settings.remove_logo") }}">
+                  <input class="visually-hidden-control" name="remove_logo_image" type="checkbox">
+                  {% include "includes/icons/trash.html" %}
+                  <span class="sr-only">{{ t("settings.remove_logo") }}</span>
+                </label>
+              {% endif %}
+            </div>
+          </section>
+        </div>
+        <div class="form-actions">
+          <button type="submit">{{ t("settings.save") }}</button>
+        </div>
       </form>
-      <hr>
-      <form action="{{ url_for('change_admin_password') }}" method="post">
+      <form class="account-settings" action="{{ url_for('change_admin_password') }}" method="post">
         <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
         <fieldset>
           <legend>{{ t("settings.password_title") }}</legend>
           <p>{{ t("settings.password_description") }}</p>
           {% if password_error %}<p class="error">{{ password_error }}</p>{% endif %}
-          <label>{{ t("settings.current_password") }} <input name="current_password" type="password" autocomplete="current-password" required></label>
-          <label>{{ t("settings.new_password") }} <input name="new_password" type="password" minlength="8" autocomplete="new-password" required></label>
-          <label>{{ t("settings.confirm_password") }} <input name="confirm_password" type="password" minlength="8" autocomplete="new-password" required></label>
-          <button type="submit">{{ t("settings.change_password") }}</button>
+          <div class="form-grid">
+            <label class="full-width">{{ t("settings.current_password") }} <input name="current_password" type="password" autocomplete="current-password" required></label>
+            <label>{{ t("settings.new_password") }} <input name="new_password" type="password" minlength="8" autocomplete="new-password" required></label>
+            <label>{{ t("settings.confirm_password") }} <input name="confirm_password" type="password" minlength="8" autocomplete="new-password" required></label>
+          </div>
+          <div class="form-actions">
+            <button type="submit">{{ t("settings.change_password") }}</button>
+          </div>
         </fieldset>
       </form>
       {% include "includes/language_selector.html" %}
+      {% include "includes/donate_widget.html" %}
     </main>
     {% include "includes/admin_scripts.html" %}
-    <script src="{{ url_for('static', filename='settings.js', v='1') }}"></script>
+    <script src="{{ url_for('static', filename='settings.js', v='2') }}"></script>
   </body>
 </html>

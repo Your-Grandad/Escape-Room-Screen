@@ -14,6 +14,7 @@ const teamDetails = document.querySelector("#team-details");
 const soundManager = window.HomeAudio.createSoundManager(window.location.search);
 announcementAudio.autoplay = soundManager.canPlaySounds;
 let timerStartedAt = null;
+let timerDurationSeconds = Number(timer.dataset.durationSeconds);
 let timerPausedAt = null;
 let roomCompletedAt = null;
 let roomFailedAt = null;
@@ -80,6 +81,9 @@ function updateDisplay(settings) {
     document.body.classList.remove("has-logo");
   }
   timerStartedAt = settings.timer_started_at;
+  timerDurationSeconds = Number(settings.timer_started_at
+    ? settings.timer_run_duration_seconds
+    : settings.timer_duration_seconds);
   timerPausedAt = settings.timer_paused_at;
   roomCompletedAt = settings.room_completed_at;
   roomFailedAt = settings.room_failed_at;
@@ -244,15 +248,16 @@ function updateLatestResult(latestResult) {
 }
 
 function updateTimer() {
+  const stoppedAt = timerPausedAt || roomCompletedAt || roomFailedAt;
   const elapsedSeconds = timerStartedAt
-    ? Math.floor(
+    ? Math.max(0, Math.floor(
       (
-        Date.parse(timerPausedAt || roomCompletedAt || roomFailedAt || new Date())
+        (stoppedAt ? Date.parse(stoppedAt) : Date.now())
         - Date.parse(timerStartedAt)
       ) / 1000,
-    ) + penaltyTimeSeconds
+    )) + penaltyTimeSeconds
     : 0;
-  const remainingSeconds = (60 * 60 + extraTimeSeconds) - elapsedSeconds;
+  const remainingSeconds = (timerDurationSeconds + extraTimeSeconds) - elapsedSeconds;
   timer.textContent = formatDuration(remainingSeconds);
 }
 

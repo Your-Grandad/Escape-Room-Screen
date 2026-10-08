@@ -11,28 +11,45 @@
           <button data-timer-action="reset" type="submit">{{ t("timer.reset") }}</button>
         </form>
       </div>
-      <section class="admin-navigation-timer" aria-live="polite" aria-label="{{ t("admin.active_timer") }}">
-        <span class="admin-navigation-timer-label" id="active-timer-state">{{ t("js.timer_not_running") }}</span>
-        <span id="active-timer-elapsed">{{ t("js.elapsed", value="—") }}</span>
-        <span id="active-timer-remaining">{{ t("js.remaining", value="—") }}</span>
+      <section class="admin-navigation-timer" id="active-timer-panel" data-timer-state="idle" data-urgency="normal" aria-label="{{ t("admin.active_timer") }}">
+        <div class="timer-status-row">
+          <span class="admin-navigation-timer-label" id="active-timer-state" role="status">{{ t("js.timer_not_running") }}</span>
+          <span id="active-timer-warning" class="timer-warning" role="status" hidden></span>
+        </div>
+        <div class="timer-values">
+          <div class="timer-stat timer-stat-remaining">
+            <span class="timer-stat-label">{{ t("admin.remaining") }}</span>
+            <output id="active-timer-remaining" aria-live="off">{{ "%02d:%02d:%02d"|format(settings.timer_base_seconds // 3600, (settings.timer_base_seconds % 3600) // 60, settings.timer_base_seconds % 60) }}</output>
+          </div>
+          <div class="timer-stat timer-stat-elapsed">
+            <span class="timer-stat-label">{{ t("admin.elapsed") }}</span>
+            <output id="active-timer-elapsed" aria-live="off">00:00:00</output>
+          </div>
+        </div>
       </section>
     </div>
   {% endif %}
-<h1 class="admin-navigation-title">{{ settings.title }}</h1>
+  <div class="admin-navigation-brand">
+    <h1 class="admin-navigation-title">{{ settings.title }}</h1>
+    {% if session.admin_username %}
+      <p class="admin-navigation-identity">{{ t("admin.signed_in_as", username=session.admin_username) }}</p>
+    {% endif %}
+  </div>
 
   <div class="admin-navigation-actions">
-    <a href="{{ url_for('admin') }}">{{ t("nav.admin") }}</a>
-    <a href="{{ url_for('statistics') }}">{{ t("nav.leaderboard") }}</a>
-    <details class="admin-navigation-menu">
+    <a href="{{ url_for('admin') }}"{% if request.endpoint == 'admin' %} aria-current="page"{% endif %}>{{ t("nav.admin") }}</a>
+    <a href="{{ url_for('statistics') }}"{% if request.endpoint == 'statistics' %} aria-current="page"{% endif %}>{{ t("nav.leaderboard") }}</a>
+    <details class="admin-navigation-menu{% if request.endpoint not in ('admin', 'statistics') %} current{% endif %}">
       <summary>{{ t("nav.settings") }}</summary>
       <div>
-        <a href="{{ url_for('settings') }}">{{ t("nav.customisation") }}</a>
-        <a href="{{ url_for('sound_settings') }}">{{ t("nav.sounds") }}</a>
-        <a href="{{ url_for('gpio_settings') }}">{{ t("nav.gpio") }}</a>
-        <a href="{{ url_for('hint_library') }}">{{ t("nav.hint_library") }}</a>
+        <a href="{{ url_for('settings') }}"{% if request.endpoint in ('settings', 'change_admin_password') %} aria-current="page"{% endif %}>{{ t("nav.customisation") }}</a>
+        <a href="{{ url_for('sound_settings') }}"{% if request.endpoint in ('sound_settings', 'upload_sounds') %} aria-current="page"{% endif %}>{{ t("nav.sounds") }}</a>
+        <a href="{{ url_for('gpio_settings') }}"{% if request.endpoint in ('gpio_settings', 'add_gpio_mapping', 'add_gpio_output_action') %} aria-current="page"{% endif %}>{{ t("nav.gpio") }}</a>
+        <a href="{{ url_for('hint_library') }}"{% if request.endpoint in ('hint_library', 'create_hint_preset', 'update_hint_preset_category') %} aria-current="page"{% endif %}>{{ t("nav.hint_library") }}</a>
         {% if session.is_superuser %}
-          <a href="{{ url_for('users') }}">{{ t("nav.users") }}</a>
+          <a href="{{ url_for('users') }}"{% if request.endpoint in ('users', 'create_user', 'reset_user_password', 'delete_user') %} aria-current="page"{% endif %}>{{ t("nav.users") }}</a>
         {% endif %}
+        {% include "includes/admin_theme_toggle.html" %}
       </div>
     </details>
     {% if settings is defined %}

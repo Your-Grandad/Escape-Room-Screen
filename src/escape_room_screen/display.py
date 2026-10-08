@@ -4,6 +4,7 @@ from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import TIMEOUT_MAX
 
 from .database import connect
 
@@ -13,6 +14,7 @@ MAX_TITLE_LENGTH = 80
 MAX_MESSAGE_LENGTH = 500
 MAX_END_MESSAGE_LENGTH = 200
 TIMER_DURATION_SECONDS = 60 * 60
+MAX_TIMER_DURATION_SECONDS = int(TIMEOUT_MAX)
 ANNOUNCEMENT_DURATION = timedelta(minutes=2)
 
 
@@ -42,6 +44,16 @@ class DisplaySettings:
     notification_sound_filename: str | None = None
     success_sound_filename: str | None = None
     failed_sound_filename: str | None = None
+    timer_duration_seconds: int = TIMER_DURATION_SECONDS
+    timer_run_duration_seconds: int = TIMER_DURATION_SECONDS
+
+    @property
+    def timer_base_seconds(self) -> int:
+        return (
+            self.timer_run_duration_seconds
+            if self.timer_started_at is not None
+            else self.timer_duration_seconds
+        )
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -153,7 +165,7 @@ class DisplaySettingsStore:
                 """
                 SELECT
                     title, message, background_colour, accent_colour, timer_started_at,
-                    timer_paused_at,
+                    timer_paused_at, timer_duration_seconds, timer_run_duration_seconds,
                     room_completed_at,
                     room_failed_at,
                     announcement, announcement_expires_at, background_image, logo_image,
@@ -240,6 +252,7 @@ class DisplaySettingsStore:
                 SET title = ?, message = ?, background_colour = ?, accent_colour = ?,
                     background_image = ?, logo_image = ?,
                     completion_message = ?, failure_message = ?,
+                    timer_duration_seconds = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = 1
                 """,
@@ -252,6 +265,7 @@ class DisplaySettingsStore:
                     updated_logo_image,
                     settings.completion_message,
                     settings.failure_message,
+                    settings.timer_duration_seconds,
                 ),
             )
             connection.commit()
@@ -268,6 +282,7 @@ class DisplaySettingsStore:
                 UPDATE display_settings
                 SET timer_started_at = ?, timer_paused_at = NULL, room_completed_at = NULL,
                 room_failed_at = NULL,
+                    timer_run_duration_seconds = timer_duration_seconds,
                     extra_time_seconds = 0, penalty_time_seconds = 0,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = 1 AND timer_started_at IS NULL
@@ -431,7 +446,7 @@ class DisplaySettingsStore:
         now = datetime.now(timezone.utc)
         expires_at = now + ANNOUNCEMENT_DURATION
         current_settings = self.get()
-        timer_remaining_seconds = TIMER_DURATION_SECONDS + current_settings.extra_time_seconds
+        timer_remaining_seconds = current_settings.timer_base_seconds + current_settings.extra_time_seconds
         if current_settings.timer_started_at is not None:
             started_at = datetime.fromisoformat(current_settings.timer_started_at)
             elapsed_at = (
@@ -444,7 +459,7 @@ class DisplaySettingsStore:
                 + current_settings.penalty_time_seconds
             )
             timer_remaining_seconds = (
-                TIMER_DURATION_SECONDS + current_settings.extra_time_seconds - elapsed_seconds
+                current_settings.timer_base_seconds + current_settings.extra_time_seconds - elapsed_seconds
             )
         with closing(connect(self.database_path)) as connection:
             connection.execute(
@@ -638,7 +653,7 @@ class DisplaySettingsStore:
             + settings.penalty_time_seconds
         )
         time_remaining_seconds = (
-            TIMER_DURATION_SECONDS
+            settings.timer_base_seconds
             + settings.extra_time_seconds
             - time_taken_seconds
         )
@@ -802,8 +817,8 @@ class DisplaySettingsStore:
         if not isinstance(remaining_minutes, str) or not remaining_minutes.isdecimal():
             raise ValueError("Automatic hint time must be a whole number of minutes.")
         minutes = int(remaining_minutes)
-        if not 0 <= minutes < 60:
-            raise ValueError("Automatic hint time must be between 0 and 59 minutes.")
+        if not 0 <= minutes * 60 < self.get().timer_duration_seconds:
+            raise ValueError("Automatic hint time must be less than the starting timer duration.")
         if not isinstance(message, str) or not message.strip() or len(message) > MAX_MESSAGE_LENGTH:
             raise ValueError(f"Automatic hint must contain 1 to {MAX_MESSAGE_LENGTH} characters.")
         with closing(connect(self.database_path)) as connection:
@@ -1130,6 +1145,7 @@ class DisplaySettingsStore:
                 UPDATE display_settings
                 SET timer_started_at = ?, timer_paused_at = NULL, room_completed_at = NULL,
                     room_failed_at = NULL,
+                    timer_run_duration_seconds = timer_duration_seconds,
                     extra_time_seconds = 0, penalty_time_seconds = 0,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = 1
@@ -1166,6 +1182,23 @@ class DisplaySettingsStore:
         return count
 
     @staticmethod
+    def parse_timer_duration(
+        hours: str | None, minutes: str | None, seconds: str | None,
+    ) -> int:
+        if (
+            hours is None or minutes is None or seconds is None
+            or not hours.isdecimal() or not minutes.isdecimal() or not seconds.isdecimal()
+        ):
+            raise ValueError("Starting duration must use whole, non-negative hours, minutes, and seconds.")
+        try:
+            hours_value, minutes_value, seconds_value = int(hours), int(minutes), int(seconds)
+        except ValueError as error:
+            raise ValueError("Starting duration exceeds the supported timer range.") from error
+        if minutes_value > 59 or seconds_value > 59:
+            raise ValueError("Starting duration minutes and seconds must be between 0 and 59.")
+        return hours_value * 3600 + minutes_value * 60 + seconds_value
+
+    @staticmethod
     def _validate(
         values: dict[str, object],
         current: DisplaySettings,
@@ -1176,7 +1209,7 @@ class DisplaySettingsStore:
             "background_colour",
             "accent_colour",
         }
-        optional_fields = {"completion_message", "failure_message"}
+        optional_fields = {"completion_message", "failure_message", "timer_duration_seconds"}
         if not required_fields.issubset(values) or not set(values).issubset(
             required_fields | optional_fields
         ):
@@ -1191,6 +1224,15 @@ class DisplaySettingsStore:
             current.completion_message,
         )
         failure_message = values.get("failure_message", current.failure_message)
+        timer_duration_seconds = values.get("timer_duration_seconds", current.timer_duration_seconds)
+        if (
+            not isinstance(timer_duration_seconds, int)
+            or isinstance(timer_duration_seconds, bool)
+            or timer_duration_seconds < 1
+        ):
+            raise ValueError("Starting duration must be at least one whole second.")
+        if timer_duration_seconds > MAX_TIMER_DURATION_SECONDS:
+            raise ValueError("Starting duration exceeds the supported timer range.")
         if not all(
             isinstance(value, str)
             for value in (
@@ -1230,6 +1272,7 @@ class DisplaySettingsStore:
             accent_colour=accent_colour.lower(),
             completion_message=completion_message.strip(),
             failure_message=failure_message.strip(),
+            timer_duration_seconds=timer_duration_seconds,
         )
 
     @staticmethod

@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from contextlib import closing
@@ -12,6 +13,7 @@ from flask.testing import FlaskClient
 
 from escape_room_screen import create_app
 from escape_room_screen.database import connect, initialize
+from escape_room_screen.display import DisplaySettingsStore, MAX_TIMER_DURATION_SECONDS
 from escape_room_screen.gpio import GpioController
 
 
@@ -92,6 +94,13 @@ class HomeScreenTests(unittest.TestCase):
     def login(self) -> str:
         return self.login_client(self.client)
 
+    def display_settings_values(self) -> dict[str, object]:
+        settings = self.app.extensions["display_store"].get()
+        return {
+            name: getattr(settings, name)
+            for name in ("title", "message", "background_colour", "accent_colour")
+        }
+
     def login_client(self, client: FlaskClient) -> str:
         response = client.post(
             "/admin/login",
@@ -138,6 +147,8 @@ class HomeScreenTests(unittest.TestCase):
         settings = self.client.get("/api/display").get_json()
         self.assertEqual(settings["completion_message"], "Congratulations!")
         self.assertEqual(settings["failure_message"], "Room failed")
+        self.assertEqual(settings["timer_duration_seconds"], 3600)
+        self.assertEqual(settings["timer_run_duration_seconds"], 3600)
 
     def test_login_can_reveal_the_entered_password(self) -> None:
         response = self.client.get("/admin/login")
@@ -154,6 +165,145 @@ class HomeScreenTests(unittest.TestCase):
         self.assertIn(b'passwordInput.type = revealing ? "text" : "password"', script.data)
         response.close()
         script.close()
+
+    def test_admin_styles_are_loaded_only_on_staff_pages(self) -> None:
+        with self.client.get("/admin/login") as response:
+            self.assertIn(b"/static/admin.css?v=5", response.data)
+            self.assertIn(b"/static/admin-theme.js?v=1", response.data)
+            self.assertIn(b"data-admin-theme-toggle", response.data)
+            self.assertLess(
+                response.data.index(b"/static/admin-theme.js"),
+                response.data.index(b"/static/admin.css"),
+            )
+        with self.client.get("/") as response:
+            self.assertNotIn(b"admin.css", response.data)
+            self.assertNotIn(b"admin-theme.js", response.data)
+            self.assertNotIn(b"data-admin-theme-toggle", response.data)
+
+        self.login()
+        for path in (
+            "/admin",
+            "/admin/settings",
+            "/admin/sounds",
+            "/admin/stats",
+            "/admin/users",
+            "/admin/hints",
+            "/admin/gpio",
+        ):
+            with self.subTest(path=path), self.client.get(path) as response:
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(b"/static/admin.css?v=5", response.data)
+                self.assertIn(b"/static/admin-theme.js?v=1", response.data)
+                self.assertEqual(response.data.count(b"data-admin-theme-toggle"), 1)
+                settings_menu = response.data.split(
+                    b'<details class="admin-navigation-menu', 1
+                )[1].split(b"</details>", 1)[0]
+                self.assertIn(b"data-admin-theme-toggle", settings_menu)
+                self.assertEqual(response.data.count(b'aria-current="page"'), 1)
+        with self.client.get("/static/admin.css") as response:
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(b".admin-page", response.data)
+
+    def test_admin_exposes_clear_timer_readouts_and_control_states(self) -> None:
+        self.login()
+        with self.client.get("/admin") as response:
+            self.assertIn(b'data-timer-state="idle"', response.data)
+            self.assertIn(b'Time remaining', response.data)
+            self.assertIn(b'Time elapsed', response.data)
+            self.assertIn(
+                b'<output id="active-timer-remaining" aria-live="off">01:00:00',
+                response.data,
+            )
+            self.assertIn(b'class="control-state-label">Active', response.data)
+            self.assertIn(b'class="control-state-label">Not running', response.data)
+            self.assertIn(b'class="btn-success"', response.data)
+            self.assertIn(b'class="btn-danger"', response.data)
+            self.assertIn(b"window.initialDisplaySettings =", response.data)
+        with self.client.get("/admin?locale=es") as response:
+            self.assertIn(b"Modo oscuro", response.data)
+            self.assertIn(b"Tiempo restante", response.data)
+            self.assertIn(b'class="control-state-label">Sin iniciar', response.data)
+
+    def test_dashboard_controls_precede_announcements_in_keyboard_order(self) -> None:
+        self.login()
+        with self.client.get("/admin") as response:
+            room_controls = response.data.index(b'data-control-id="gpio"')
+            adjustments = response.data.index(b'data-control-id="timer"')
+            announcements = response.data.index(b'data-control-id="announcement"')
+            self.assertLess(room_controls, adjustments)
+            self.assertLess(adjustments, announcements)
+
+    def test_admin_utility_sections_are_localized(self) -> None:
+        self.login()
+        for path, headings in (
+            ("/admin", ("Controles de la sala",)),
+            ("/admin/settings", ("Texto de la pantalla", "Colores e imágenes", "Duración inicial del temporizador")),
+            ("/admin/hints", ("Crear una pista",)),
+        ):
+            with self.subTest(path=path), self.client.get(
+                path + "?locale=es"
+            ) as response:
+                self.assertEqual(response.status_code, 200)
+                for heading in headings:
+                    self.assertIn(heading.encode(), response.data)
+
+    def test_donation_visibility_uses_environment_setting(self) -> None:
+        for value, hidden in (
+            (None, False),
+            ("false", False),
+            ("true", True),
+            ("TRUE", True),
+            (" true ", True),
+        ):
+            with self.subTest(value=value), patch.dict(os.environ):
+                if value is None:
+                    os.environ.pop("HIDE_DONATIONS", None)
+                else:
+                    os.environ["HIDE_DONATIONS"] = value
+                app = self.create_test_app()
+                self.addCleanup(app.extensions["display_runtime"].cancel_timer_events)
+                self.addCleanup(app.extensions["gpio"].close)
+                self.assertEqual(app.config["HIDE_DONATIONS"], hidden)
+                with app.test_client().get("/admin/login") as response:
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        b'class="donate-widget"' in response.data, not hidden
+                    )
+                    self.assertEqual(b"storage.ko-fi.com" in response.data, not hidden)
+                    self.assertEqual(b"kofiwidget2" in response.data, not hidden)
+                    self.assertIn(b'class="language-selector"', response.data)
+
+    def test_donation_visibility_is_consistent_across_admin_pages(self) -> None:
+        self.login()
+        for path in (
+            "/admin",
+            "/admin/settings",
+            "/admin/sounds",
+            "/admin/stats",
+            "/admin/users",
+            "/admin/hints",
+            "/admin/gpio",
+        ):
+            language_visible = False
+            for hidden in (False, True):
+                self.app.config["HIDE_DONATIONS"] = hidden
+                with (
+                    self.subTest(hidden=hidden, path=path),
+                    self.client.get(path) as response,
+                ):
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        b'class="donate-widget"' in response.data, not hidden
+                    )
+                    self.assertEqual(b"storage.ko-fi.com" in response.data, not hidden)
+                    self.assertEqual(b"kofiwidget2" in response.data, not hidden)
+                    if not hidden:
+                        language_visible = b'class="language-selector"' in response.data
+                    else:
+                        self.assertEqual(
+                            b'class="language-selector"' in response.data,
+                            language_visible,
+                        )
 
     def test_supported_locale_is_rendered_and_saved_for_the_current_session(self) -> None:
         response = self.client.get("/?locale=es")
@@ -309,6 +459,27 @@ class HomeScreenTests(unittest.TestCase):
         self.assertIn(b'class="language-selector"', response.data)
         self.assertIn(b"Change admin password", response.data)
         self.assertIn(b'name="current_password"', response.data)
+
+    def test_settings_stack_text_and_duration_beside_appearance_with_preview_placeholders(self) -> None:
+        self.login()
+        with self.client.get("/admin/settings") as response:
+            left_column = response.data.split(b'class="settings-content-column"', 1)[1].split(
+                b'class="utility-section settings-appearance"', 1
+            )[0]
+            self.assertIn(b"Display text", left_column)
+            self.assertIn(b"Starting timer duration", left_column)
+            self.assertIn(b'name="timer_hours"', left_column)
+            for name in ("background", "logo"):
+                self.assertIn(
+                    f'id="{name}-image-preview" class="settings-image-preview" hidden'.encode(),
+                    response.data,
+                )
+                self.assertIn(f'id="{name}-image-preview-error"'.encode(), response.data)
+            self.assertIn(b"/static/settings.js?v=2", response.data)
+        with self.client.get("/admin/settings?locale=es") as response:
+            self.assertIn("Vista previa de la imagen de fondo".encode(), response.data)
+            self.assertIn("Vista previa del logotipo".encode(), response.data)
+            self.assertIn("No se pudo cargar la vista previa".encode(), response.data)
 
     def test_admin_password_can_be_changed_and_persists(self) -> None:
         csrf_token = self.login()
@@ -635,6 +806,11 @@ class HomeScreenTests(unittest.TestCase):
         self.assertRegex(filename, r"^[0-9a-f]{32}\.png$")
         uploaded_image = self.client.get(f"/uploads/{filename}")
         self.assertEqual(uploaded_image.status_code, 200)
+        with self.client.get("/admin/settings") as page:
+            self.assertIn(
+                f'id="background-image-preview" class="settings-image-preview" src="/uploads/{filename}"'.encode(),
+                page.data,
+            )
         response.close()
         uploaded_image.close()
 
@@ -667,6 +843,10 @@ class HomeScreenTests(unittest.TestCase):
         settings_page = self.client.get("/admin/settings")
         self.assertIn(b"Current logo:", settings_page.data)
         self.assertIn(b'name="remove_logo_image"', settings_page.data)
+        self.assertIn(
+            f'id="logo-image-preview" class="settings-image-preview" src="/uploads/{filename}"'.encode(),
+            settings_page.data,
+        )
 
         remove_response = self.client.post(
             "/admin/settings",
@@ -682,6 +862,8 @@ class HomeScreenTests(unittest.TestCase):
         )
         self.assertEqual(remove_response.status_code, 302)
         self.assertIsNone(self.client.get("/api/display").get_json()["logo_image"])
+        with self.client.get("/admin/settings") as page:
+            self.assertIn(b'id="logo-image-preview" class="settings-image-preview" hidden', page.data)
         self.assertEqual(self.client.get(f"/uploads/{filename}").status_code, 404)
         response.close()
         home_page.close()
@@ -1227,6 +1409,273 @@ class HomeScreenTests(unittest.TestCase):
         )
         self.assertEqual(reset.status_code, 200)
         self.assertIsNone(reset.get_json()["timer_started_at"])
+
+    def test_starting_duration_is_saved_and_survives_restart(self) -> None:
+        csrf_token = self.login()
+        response = self.client.post(
+            "/admin/settings",
+            data={
+                **self.display_settings_values(),
+                "csrf_token": csrf_token,
+                "timer_hours": "1",
+                "timer_minutes": "30",
+                "timer_seconds": "15",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            self.client.get("/api/display").get_json()["timer_duration_seconds"], 5415
+        )
+        with self.client.get("/admin/settings") as page:
+            self.assertIn(b'name="timer_hours" type="number" min="0" step="1" value="1"', page.data)
+            self.assertIn(b'name="timer_minutes" type="number" min="0" max="59" step="1" value="30"', page.data)
+            self.assertIn(b'name="timer_seconds" type="number" min="0" max="59" step="1" value="15"', page.data)
+        with self.client.get("/admin") as page:
+            self.assertIn(b'aria-live="off">01:30:15</output>', page.data)
+        with self.client.get("/") as page:
+            self.assertIn(b'data-duration-seconds="5415"', page.data)
+            self.assertIn(b">90:15</p>", page.data)
+        recreated = self.create_test_app()
+        self.addCleanup(recreated.extensions["display_runtime"].cancel_timer_events)
+        self.addCleanup(recreated.extensions["gpio"].close)
+        self.assertEqual(recreated.extensions["display_store"].get().timer_duration_seconds, 5415)
+
+    def test_invalid_starting_duration_fields_do_not_change_saved_settings(self) -> None:
+        csrf_token = self.login()
+        for fields in (
+            {"timer_hours": "0", "timer_minutes": "0", "timer_seconds": "0"},
+            {"timer_hours": "-1", "timer_minutes": "0", "timer_seconds": "0"},
+            {"timer_hours": "1.5", "timer_minutes": "0", "timer_seconds": "0"},
+            {"timer_hours": "1", "timer_minutes": "60", "timer_seconds": "0"},
+            {"timer_hours": "1", "timer_minutes": "0", "timer_seconds": "60"},
+            {"timer_hours": "", "timer_minutes": "0", "timer_seconds": "1"},
+            {"timer_hours": "one", "timer_minutes": "0", "timer_seconds": "0"},
+            {"timer_minutes": "30", "timer_seconds": "0"},
+            {"timer_hours": str(MAX_TIMER_DURATION_SECONDS // 3600 + 1), "timer_minutes": "0", "timer_seconds": "0"},
+            {"timer_hours": "9" * 5000, "timer_minutes": "0", "timer_seconds": "0"},
+        ):
+            with self.subTest(fields=fields):
+                response = self.client.post(
+                    "/admin/settings",
+                    data={
+                        **self.display_settings_values(),
+                        "title": "Do not save this",
+                        "csrf_token": csrf_token,
+                        **fields,
+                    },
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(b'class="error"', response.data)
+                self.assertNotIn(b"sys.set_int_max_str_digits", response.data)
+                saved = self.client.get("/api/display").get_json()
+                self.assertEqual(saved["timer_duration_seconds"], 3600)
+                self.assertEqual(saved["title"], "Welcome")
+
+    def test_starting_duration_api_validates_whole_positive_seconds(self) -> None:
+        csrf_token = self.login()
+        for duration in (0, -1, True, 1.5, "3600", None, MAX_TIMER_DURATION_SECONDS + 1):
+            with self.subTest(duration=duration):
+                response = self.client.post(
+                    "/api/admin/settings",
+                    json={**self.display_settings_values(), "timer_duration_seconds": duration},
+                    headers={"X-CSRF-Token": csrf_token},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertTrue(response.get_json()["error"])
+                self.assertEqual(self.app.extensions["display_store"].get().timer_duration_seconds, 3600)
+        for duration in (1, 45 * 60, 2 * 3600 + 59 * 60 + 59):
+            with self.subTest(duration=duration):
+                response = self.client.post(
+                    "/api/admin/settings",
+                    json={**self.display_settings_values(), "timer_duration_seconds": duration},
+                    headers={"X-CSRF-Token": csrf_token},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["timer_duration_seconds"], duration)
+        response = self.client.post(
+            "/api/admin/settings",
+            json=self.display_settings_values(),
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(response.get_json()["timer_duration_seconds"], 10799)
+        response = self.client.post(
+            "/admin/settings",
+            data={**self.display_settings_values(), "csrf_token": csrf_token},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.app.extensions["display_store"].get().timer_duration_seconds, 10799)
+
+    def test_duration_changes_apply_to_next_start_not_current_session(self) -> None:
+        csrf_token = self.login()
+        headers = {"X-CSRF-Token": csrf_token}
+        for action in (None, "pause", "complete", "fail"):
+            with self.subTest(action=action):
+                self.app.extensions["display_store"].update({
+                    **self.display_settings_values(), "timer_duration_seconds": 600,
+                })
+                started = self.client.post("/admin/timer/start", headers=headers).get_json()
+                self.assertEqual(started["timer_run_duration_seconds"], 600)
+                if action is not None:
+                    path = "/admin/timer/pause" if action == "pause" else f"/admin/{action}"
+                    self.assertEqual(self.client.post(path, headers=headers).status_code, 200)
+                previous = self.client.get("/api/display").get_json()
+                updated = self.client.post(
+                    "/api/admin/settings",
+                    json={**self.display_settings_values(), "timer_duration_seconds": 1800},
+                    headers=headers,
+                )
+                self.assertEqual(updated.status_code, 200)
+                for field in (
+                    "timer_started_at", "timer_paused_at", "room_completed_at",
+                    "room_failed_at", "timer_run_duration_seconds",
+                    "extra_time_seconds", "penalty_time_seconds",
+                ):
+                    self.assertEqual(updated.get_json()[field], previous[field])
+                self.assertEqual(self.app.extensions["display_store"].get().timer_base_seconds, 600)
+                reset = self.client.post("/admin/timer/reset", headers=headers).get_json()
+                self.assertIsNone(reset["timer_started_at"])
+                self.assertEqual(reset["timer_duration_seconds"], 1800)
+                self.assertEqual(self.app.extensions["display_store"].get().timer_base_seconds, 1800)
+                restarted = self.client.post("/admin/timer/start", headers=headers).get_json()
+                self.assertEqual(restarted["timer_run_duration_seconds"], 1800)
+
+    def test_custom_duration_is_captured_by_gpio_start(self) -> None:
+        app, _client = self.create_gpio_trigger_event_app(GPIO_INPUTS={"start-timer": 17})
+        runtime = app.extensions["display_runtime"]
+        self.addCleanup(runtime.cancel_timer_events)
+        runtime.store.update({
+            **self.display_settings_values(), "timer_duration_seconds": 5415,
+        })
+        runtime.handle_gpio_event(17, "start-timer")
+        first = runtime.store.get()
+        self.assertIsNotNone(first.timer_started_at)
+        self.assertEqual(first.timer_run_duration_seconds, 5415)
+        runtime.store.update({
+            **self.display_settings_values(), "timer_duration_seconds": 600,
+        })
+        runtime.handle_gpio_event(17, "start-timer")
+        self.assertEqual(runtime.store.get().timer_run_duration_seconds, 5415)
+        self.assertEqual(runtime.store.get().timer_started_at, first.timer_started_at)
+        runtime.store.reset_timer()
+        runtime.handle_gpio_event(17, "start-timer")
+        self.assertEqual(runtime.store.get().timer_run_duration_seconds, 600)
+
+    def test_custom_run_duration_is_used_for_hints_and_results(self) -> None:
+        csrf_token = self.login()
+        headers = {"X-CSRF-Token": csrf_token}
+        for outcome, action in (("completed", "complete"), ("failed", "fail")):
+            with self.subTest(outcome=outcome):
+                self.app.extensions["display_store"].update({
+                    **self.display_settings_values(), "timer_duration_seconds": 5415,
+                })
+                started = self.client.post("/admin/timer/start", headers=headers).get_json()
+                for seconds in (120, -30):
+                    self.client.post("/admin/timer/adjust", json={"seconds": seconds}, headers=headers)
+                paused_at = datetime.fromisoformat(started["timer_started_at"]) + timedelta(seconds=100)
+                with closing(connect(self.database_path)) as connection:
+                    connection.execute(
+                        "UPDATE display_settings SET timer_paused_at = ? WHERE id = 1",
+                        (paused_at.isoformat(),),
+                    )
+                    connection.commit()
+                self.client.post(
+                    "/api/admin/settings",
+                    json={**self.display_settings_values(), "timer_duration_seconds": 600},
+                    headers=headers,
+                )
+                hint = self.client.post(
+                    "/admin/announcement", json={"message": "Check the clock."}, headers=headers,
+                )
+                self.assertEqual(hint.status_code, 200)
+                self.assertEqual(hint.get_json()["hint"]["timer_remaining_seconds"], 5405)
+                self.assertEqual(self.client.post(f"/admin/{action}", headers=headers).status_code, 200)
+                result = self.client.post(
+                    "/admin/results",
+                    json={"group_name": "Clock Watchers", "group_size": "4", "hints_used": "1", "penalties": "1"},
+                    headers=headers,
+                )
+                self.assertEqual(result.status_code, 200)
+                self.assertEqual(result.get_json()["outcome"], outcome)
+                self.assertEqual(result.get_json()["time_taken_seconds"], 130)
+                self.assertEqual(result.get_json()["time_remaining_seconds"], 5405)
+
+    def test_automatic_hint_and_failure_use_captured_duration_and_adjustments(self) -> None:
+        store = self.app.extensions["display_store"]
+        runtime = self.app.extensions["display_runtime"]
+        store.update({**self.display_settings_values(), "timer_duration_seconds": 5415})
+        store.set_automatic_hint("75", "Check the clock.")
+        now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+        with patch("escape_room_screen.display.datetime", wraps=datetime) as clock:
+            clock.now.return_value = now
+            store.start_timer()
+        store.adjust_timer(120)
+        store.adjust_timer(-30)
+        store.update({**self.display_settings_values(), "timer_duration_seconds": 600})
+        with (
+            patch("escape_room_screen.runtime.datetime", wraps=datetime) as clock,
+            patch("escape_room_screen.runtime.Timer") as timer,
+        ):
+            clock.now.return_value = now + timedelta(seconds=100)
+            runtime.schedule_timer_events(store.get())
+            self.assertEqual(timer.call_count, 2)
+            self.assertEqual(timer.call_args_list[0].args[0], 905)
+            self.assertEqual(timer.call_args_list[1].args[0], 5405)
+        with self.assertRaisesRegex(ValueError, "less than the starting timer duration"):
+            store.set_automatic_hint("10", "Too early.")
+
+    def test_custom_duration_automatically_fails_at_original_run_deadline(self) -> None:
+        store = self.app.extensions["display_store"]
+        store.update({**self.display_settings_values(), "timer_duration_seconds": 75})
+        now = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+        with patch("escape_room_screen.display.datetime", wraps=datetime) as clock:
+            clock.now.return_value = now
+            store.start_timer()
+        store.update({**self.display_settings_values(), "timer_duration_seconds": 600})
+        with patch("escape_room_screen.runtime.datetime", wraps=datetime) as clock:
+            clock.now.return_value = now + timedelta(seconds=76)
+            self.app.extensions["display_runtime"].schedule_timer_events(store.get())
+        self.assertEqual(
+            datetime.fromisoformat(store.get().room_failed_at), now + timedelta(seconds=75)
+        )
+
+    def test_duration_migration_preserves_legacy_active_runs_and_is_idempotent(self) -> None:
+        path = Path(self.temporary_directory.name) / "legacy-duration.db"
+        with closing(connect(path)) as connection:
+            connection.executescript("""
+                CREATE TABLE display_settings (
+                    id INTEGER PRIMARY KEY, title TEXT NOT NULL, message TEXT NOT NULL,
+                    background_colour TEXT NOT NULL, accent_colour TEXT NOT NULL,
+                    timer_started_at TEXT, timer_paused_at TEXT,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO display_settings (
+                    id, title, message, background_colour, accent_colour,
+                    timer_started_at, timer_paused_at
+                ) VALUES (
+                    1, 'Legacy room', 'Keep this message', '#102a43', '#f6c453',
+                    '2026-10-08T12:00:00+00:00', '2026-10-08T12:10:00+00:00'
+                );
+            """)
+            connection.commit()
+        initialize(path)
+        initialize(path)
+        store = DisplaySettingsStore(path)
+        original = store.get()
+        self.assertEqual(original.title, "Legacy room")
+        self.assertEqual(original.message, "Keep this message")
+        self.assertEqual(original.timer_duration_seconds, 3600)
+        self.assertEqual(original.timer_run_duration_seconds, 3600)
+        store.update({
+            "title": original.title, "message": original.message,
+            "background_colour": original.background_colour, "accent_colour": original.accent_colour,
+            "timer_duration_seconds": 600,
+        })
+        initialize(path)
+        saved = store.get()
+        self.assertEqual(saved.timer_duration_seconds, 600)
+        self.assertEqual(saved.timer_base_seconds, 3600)
+        self.assertEqual(saved.timer_started_at, original.timer_started_at)
+        self.assertEqual(saved.timer_paused_at, original.timer_paused_at)
 
     def test_timer_can_be_started_from_the_admin_form(self) -> None:
         csrf_token = self.login()
@@ -1941,12 +2390,24 @@ class HomeScreenTests(unittest.TestCase):
         )
 
     def test_settings_require_admin_session_and_csrf_token(self) -> None:
-        response = self.client.post("/api/admin/settings", json={})
-        self.assertEqual(response.status_code, 401)
-
-        self.login()
-        response = self.client.post("/api/admin/settings", json={})
-        self.assertEqual(response.status_code, 400)
+        for authenticated, expected_status in ((False, 401), (True, 400)):
+            if authenticated:
+                self.login()
+            with self.subTest(authenticated=authenticated):
+                response = self.client.post(
+                    "/api/admin/settings",
+                    json={**self.display_settings_values(), "timer_duration_seconds": 5415},
+                )
+                self.assertEqual(response.status_code, expected_status)
+                response = self.client.post(
+                    "/admin/settings",
+                    data={
+                        **self.display_settings_values(),
+                        "timer_hours": "1", "timer_minutes": "30", "timer_seconds": "15",
+                    },
+                )
+                self.assertEqual(response.status_code, expected_status)
+                self.assertEqual(self.app.extensions["display_store"].get().timer_duration_seconds, 3600)
 
     def test_invalid_display_settings_are_rejected(self) -> None:
         csrf_token = self.login()

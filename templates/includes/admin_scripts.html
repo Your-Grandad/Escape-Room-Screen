@@ -1,5 +1,5 @@
 {% include "includes/live_preview.html" %}
-<script>window.csrfToken = {{ csrf_token|tojson }}; window.i18n = {{ client_translations("admin")|tojson }};</script>
+<script>window.csrfToken = {{ csrf_token|tojson }}; window.i18n = {{ client_translations("admin")|tojson }}; window.initialDisplaySettings = {{ settings.to_dict()|tojson }};</script>
 <script src="{{ url_for('static', filename='i18n.js') }}"></script>
-<script src="{{ url_for('static', filename='admin-dom.js', v='2') }}"></script>
-<script src="{{ url_for('static', filename='admin.js', v='11') }}"></script>
+<script src="{{ url_for('static', filename='admin-dom.js', v='4') }}"></script>
+<script src="{{ url_for('static', filename='admin.js', v='13') }}"></script>

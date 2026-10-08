@@ -1,32 +1,39 @@
 <section class="control-card height-2" data-control-id="gpio" data-outputs='{{ gpio_outputs|tojson }}'>
+  <h2>{{ t("admin.room_controls") }}</h2>
   <div class="gpio-controls">
     <form action="{{ url_for('complete_room') }}" method="post" class="inline-form">
       <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
-      <button id="complete-room" class="btn-active" type="submit">{{ t("controls.complete_room") }}</button>
+      <button id="complete-room" class="btn-success" type="submit">{{ t("controls.complete_room") }}</button>
     </form>
     <form action="{{ url_for('fail_room') }}" method="post" class="inline-form">
       <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
-      <button id="fail-room" class="btn-paused" type="submit">{{ t("controls.fail_room") }}</button>
+      <button id="fail-room" class="btn-danger" type="submit">{{ t("controls.fail_room") }}</button>
     </form>
 
-    <button id="toggle-gpio-pause" type="button" data-paused="{{ gpio_paused|tojson }}" class="{{ 'btn-paused' if gpio_paused else 'btn-active' }}">
-      {% if gpio_paused %}{{ t("controls.resume_interaction") }}{% else %}{{ t("controls.pause_interaction") }}{% endif %}
+    <button id="toggle-gpio-pause" type="button" data-paused="{{ gpio_paused|tojson }}" data-control-state="{{ 'paused' if gpio_paused else 'active' }}" class="state-control {{ 'btn-paused' if gpio_paused else 'btn-active' }}">
+      <span class="control-state-label">{{ t("js.state_paused") if gpio_paused else t("js.state_active") }}</span>
+      <span class="control-action-label">{% if gpio_paused %}{{ t("controls.resume_interaction") }}{% else %}{{ t("controls.pause_interaction") }}{% endif %}</span>
     </button>
 
-    <button id="toggle-timer-pause" type="button" data-paused="{{ settings.timer_paused_at|tojson }}" class="{{ 'btn-paused' if settings.timer_paused_at else 'btn-active' }}">
-      {% if settings.timer_paused_at %}{{ t("controls.resume_timer") }}{% else %}{{ t("controls.pause_timer") }}{% endif %}
+    {% set timer_finished = settings.room_completed_at or settings.room_failed_at %}
+    {% set timer_state = 'idle' if not settings.timer_started_at else 'finished' if timer_finished else 'paused' if settings.timer_paused_at else 'active' %}
+    <button id="toggle-timer-pause" type="button" data-paused="{{ settings.timer_paused_at|tojson }}" data-control-state="{{ timer_state }}" class="state-control {{ 'btn-active' if timer_state == 'active' else 'btn-paused' if timer_state == 'paused' else 'btn-inactive' }}" {% if timer_state in ('idle', 'finished') %}disabled{% endif %}>
+      <span class="control-state-label">{{ t("js.state_" ~ timer_state) }}</span>
+      <span class="control-action-label">{% if settings.timer_paused_at %}{{ t("controls.resume_timer") }}{% else %}{{ t("controls.pause_timer") }}{% endif %}</span>
     </button>
 
     <form action="{{ url_for('toggle_display_power') }}" method="post" class="inline-form">
       <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
-      <button id="toggle-display-power" class="{{ 'btn-active' if display_power_on else 'btn-paused' }}" type="submit" {% if not display_power_available %}disabled{% endif %}>
-        {% if display_power_on %}{{ t("controls.monitor_on") }}{% else %}{{ t("controls.monitor_off") }}{% endif %}
+      <button id="toggle-display-power" class="state-control {{ 'btn-active' if display_power_available and display_power_on else 'btn-inactive' }}" data-control-state="{{ 'unavailable' if not display_power_available else 'active' if display_power_on else 'inactive' }}" type="submit" {% if not display_power_available %}disabled{% endif %}>
+        <span class="control-state-label">{{ t("admin.state_unavailable") if not display_power_available else t("admin.state_on") if display_power_on else t("admin.state_off") }}</span>
+        <span class="control-action-label">{{ t("controls.toggle_display") }}</span>
       </button>
     </form>
 
   </div>
 
   <section class="gpio-extra-buttons" aria-labelledby="gpio-extra-buttons-title">
+    <h3 id="gpio-extra-buttons-title">{{ t("gpio.extra_buttons") }}</h3>
     {% for action in gpio_output_actions %}
       <button
         type="button"

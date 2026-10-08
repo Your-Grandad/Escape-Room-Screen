@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("sounds.title") }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='6') }}">
+    {% include "includes/admin_theme_head.html" %}
   </head>
   <body class="admin-page">
     <main class="panel">
@@ -15,59 +16,58 @@
       {% if error %}<p class="error">{{ error }}</p>{% endif %}
       <form method="post" enctype="multipart/form-data">
         <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
-
-        <fieldset>
-          <legend>{{ t("sounds.notification") }}</legend>
-          <label>{{ t("sounds.upload") }}
-            <input name="notification_sound" accept=".mp3,.wav,.ogg,.m4a,.aac,audio/*" type="file">
-          </label>
-          {% if settings.notification_sound_filename %}
-            <p>{{ t("sounds.current") }} <a href="{{ url_for('uploaded_file', filename=settings.notification_sound_filename) }}" target="_blank">{{ settings.notification_sound_filename }}</a></p>
-            <audio controls src="{{ url_for('uploaded_file', filename=settings.notification_sound_filename) }}"></audio>
-            <label class="icon-toggle danger" title="{{ t("sounds.remove") }}">
-              <input class="visually-hidden-control" name="remove_notification_sound" type="checkbox">
-              {% include "includes/icons/trash.html" %}
-              <span class="sr-only">{{ t("sounds.remove") }}</span>
+        <div class="form-grid">
+          <fieldset>
+            <legend>{{ t("sounds.notification") }}</legend>
+            <label>{{ t("sounds.upload") }}
+              <input name="notification_sound" accept=".mp3,.wav,.ogg,.m4a,.aac,audio/*" type="file">
             </label>
-          {% endif %}
-        </fieldset>
-
-        <fieldset>
-          <legend>{{ t("sounds.completed") }}</legend>
-          <label>{{ t("sounds.upload") }}
-            <input name="success_sound" accept=".mp3,.wav,.ogg,.m4a,.aac,audio/*" type="file">
-          </label>
-          {% if settings.success_sound_filename %}
-            <p>{{ t("sounds.current") }} <a href="{{ url_for('uploaded_file', filename=settings.success_sound_filename) }}" target="_blank">{{ settings.success_sound_filename }}</a></p>
-            <audio controls src="{{ url_for('uploaded_file', filename=settings.success_sound_filename) }}"></audio>
-            <label class="icon-toggle danger" title="{{ t("sounds.remove") }}">
-              <input class="visually-hidden-control" name="remove_success_sound" type="checkbox">
-              {% include "includes/icons/trash.html" %}
-              <span class="sr-only">{{ t("sounds.remove") }}</span>
+            {% if settings.notification_sound_filename %}
+              <p>{{ t("sounds.current") }} <a href="{{ url_for('uploaded_file', filename=settings.notification_sound_filename) }}" target="_blank">{{ settings.notification_sound_filename }}</a></p>
+              <audio controls src="{{ url_for('uploaded_file', filename=settings.notification_sound_filename) }}"></audio>
+              <label class="icon-toggle danger" title="{{ t("sounds.remove") }}">
+                <input class="visually-hidden-control" name="remove_notification_sound" type="checkbox">
+                {% include "includes/icons/trash.html" %}
+                <span class="sr-only">{{ t("sounds.remove") }}</span>
+              </label>
+            {% endif %}
+          </fieldset>
+          <fieldset>
+            <legend>{{ t("sounds.completed") }}</legend>
+            <label>{{ t("sounds.upload") }}
+              <input name="success_sound" accept=".mp3,.wav,.ogg,.m4a,.aac,audio/*" type="file">
             </label>
-          {% endif %}
-        </fieldset>
-
-        <fieldset>
-          <legend>{{ t("sounds.failed") }}</legend>
-          <label>{{ t("sounds.upload") }}
-            <input name="failed_sound" accept=".mp3,.wav,.ogg,.m4a,.aac,audio/*" type="file">
-          </label>
-          {% if settings.failed_sound_filename %}
-            <p>{{ t("sounds.current") }} <a href="{{ url_for('uploaded_file', filename=settings.failed_sound_filename) }}" target="_blank">{{ settings.failed_sound_filename }}</a></p>
-            <audio controls src="{{ url_for('uploaded_file', filename=settings.failed_sound_filename) }}"></audio>
-            <label class="icon-toggle danger" title="{{ t("sounds.remove") }}">
-              <input class="visually-hidden-control" name="remove_failed_sound" type="checkbox">
-              {% include "includes/icons/trash.html" %}
-              <span class="sr-only">{{ t("sounds.remove") }}</span>
+            {% if settings.success_sound_filename %}
+              <p>{{ t("sounds.current") }} <a href="{{ url_for('uploaded_file', filename=settings.success_sound_filename) }}" target="_blank">{{ settings.success_sound_filename }}</a></p>
+              <audio controls src="{{ url_for('uploaded_file', filename=settings.success_sound_filename) }}"></audio>
+              <label class="icon-toggle danger" title="{{ t("sounds.remove") }}">
+                <input class="visually-hidden-control" name="remove_success_sound" type="checkbox">
+                {% include "includes/icons/trash.html" %}
+                <span class="sr-only">{{ t("sounds.remove") }}</span>
+              </label>
+            {% endif %}
+          </fieldset>
+          <fieldset>
+            <legend>{{ t("sounds.failed") }}</legend>
+            <label>{{ t("sounds.upload") }}
+              <input name="failed_sound" accept=".mp3,.wav,.ogg,.m4a,.aac,audio/*" type="file">
             </label>
-          {% endif %}
-
-        </fieldset>
-
-        <button type="submit">{{ t("sounds.save") }}</button>
+            {% if settings.failed_sound_filename %}
+              <p>{{ t("sounds.current") }} <a href="{{ url_for('uploaded_file', filename=settings.failed_sound_filename) }}" target="_blank">{{ settings.failed_sound_filename }}</a></p>
+              <audio controls src="{{ url_for('uploaded_file', filename=settings.failed_sound_filename) }}"></audio>
+              <label class="icon-toggle danger" title="{{ t("sounds.remove") }}">
+                <input class="visually-hidden-control" name="remove_failed_sound" type="checkbox">
+                {% include "includes/icons/trash.html" %}
+                <span class="sr-only">{{ t("sounds.remove") }}</span>
+              </label>
+            {% endif %}
+          </fieldset>
+        </div>
+        <div class="form-actions">
+          <button type="submit">{{ t("sounds.save") }}</button>
+        </div>
       </form>
-      {% include "includes/language_selector.html" %}
+      {% include "includes/donate_widget.html" %}
     </main>
     {% include "includes/admin_scripts.html" %}
   </body>

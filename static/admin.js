@@ -16,10 +16,12 @@ const timerPauseButton = document.querySelector("#toggle-timer-pause");
 const activeTimerState = document.querySelector("#active-timer-state");
 const activeTimerElapsed = document.querySelector("#active-timer-elapsed");
 const activeTimerRemaining = document.querySelector("#active-timer-remaining");
+const activeTimerPanel = document.querySelector("#active-timer-panel");
+const activeTimerWarning = document.querySelector("#active-timer-warning");
 const actionLogList = document.querySelector("#action-log-list");
 const actionLogStorageKey = "admin-action-log-cache";
 const adminDom = window.AdminDom;
-let activeTimerSnapshot = null;
+let activeTimerSnapshot = window.initialDisplaySettings || null;
 let shownRoomResultKey = null;
 
 async function post(path, body) {
@@ -60,35 +62,28 @@ function clearActionLogCache() {
 }
 
 function updateActiveTimerDisplay() {
-  if (!activeTimerState || !activeTimerElapsed || !activeTimerRemaining) return;
-  if (!activeTimerSnapshot || !activeTimerSnapshot.timer_started_at) {
-    activeTimerState.textContent = window.translate("js.timer_not_running");
-    activeTimerElapsed.textContent = window.translate("js.elapsed", { value: "—" });
-    activeTimerRemaining.textContent = window.translate("js.remaining", { value: "—" });
-    return;
+  if (!activeTimerPanel || !activeTimerState || !activeTimerElapsed || !activeTimerRemaining) return;
+  const timer = adminDom.getTimerPresentation(activeTimerSnapshot || {});
+  const stateLabels = {
+    idle: "js.timer_not_running",
+    running: "js.timer_running",
+    paused: "js.timer_paused",
+    completed: "js.timer_completed",
+    failed: "js.timer_failed",
+  };
+  activeTimerPanel.dataset.timerState = timer.state;
+  activeTimerPanel.dataset.urgency = timer.urgency;
+  const stateLabel = window.translate(stateLabels[timer.state]);
+  if (activeTimerState.textContent !== stateLabel) activeTimerState.textContent = stateLabel;
+  activeTimerElapsed.textContent = adminDom.formatClockDuration(timer.elapsedSeconds);
+  activeTimerRemaining.textContent = adminDom.formatClockDuration(timer.remainingSeconds);
+  if (activeTimerWarning) {
+    activeTimerWarning.hidden = timer.urgency === "normal";
+    const warningLabel = timer.urgency === "normal"
+      ? ""
+      : window.translate(timer.urgency === "critical" ? "js.timer_critical_time" : "js.timer_low_time");
+    if (activeTimerWarning.textContent !== warningLabel) activeTimerWarning.textContent = warningLabel;
   }
-  const startedAt = new Date(activeTimerSnapshot.timer_started_at);
-  const endedAt = activeTimerSnapshot.room_completed_at
-    || activeTimerSnapshot.room_failed_at
-    || activeTimerSnapshot.timer_paused_at;
-  const completedAt = endedAt
-    ? new Date(endedAt)
-    : new Date();
-  const extraTimeSeconds = Number(activeTimerSnapshot.extra_time_seconds || 0);
-  const penaltyTimeSeconds = Number(activeTimerSnapshot.penalty_time_seconds || 0);
-  const elapsedSeconds = Math.max(0, Math.floor((completedAt - startedAt) / 1000)) + penaltyTimeSeconds;
-  const remainingSeconds = Math.max(0, (3600 + extraTimeSeconds) - elapsedSeconds);
-  activeTimerState.textContent = activeTimerSnapshot.room_failed_at
-    ? window.translate("js.timer_failed")
-    : activeTimerSnapshot.room_completed_at
-      ? window.translate("js.timer_completed")
-      : window.translate("js.timer_running");
-  activeTimerElapsed.textContent = window.translate("js.elapsed", {
-    value: adminDom.formatClockDuration(elapsedSeconds),
-  });
-  activeTimerRemaining.textContent = window.translate("js.remaining", {
-    value: adminDom.formatClockDuration(remainingSeconds),
-  });
 }
 
 async function refreshActiveTimer() {
@@ -103,9 +98,10 @@ async function refreshActiveTimer() {
   }
 }
 
-function setStatusText(text) {
+function setStatusText(text, level = "info") {
   if (status) {
     status.textContent = text;
+    status.dataset.level = level;
   }
 }
 
@@ -118,12 +114,15 @@ function setCompletionMessage(text) {
 function updateActiveTimerSnapshot(settings) {
   activeTimerSnapshot = {
     timer_started_at: settings.timer_started_at,
+    timer_duration_seconds: settings.timer_duration_seconds,
+    timer_run_duration_seconds: settings.timer_run_duration_seconds,
     timer_paused_at: settings.timer_paused_at,
     room_completed_at: settings.room_completed_at,
     room_failed_at: settings.room_failed_at,
     extra_time_seconds: settings.extra_time_seconds,
     penalty_time_seconds: settings.penalty_time_seconds,
   };
+  updateTimerPauseButton(settings);
 }
 
 function applyActiveTimerSettings(settings) {
@@ -236,7 +235,7 @@ function initCancelAnnouncementForm() {
       setStatusText(window.translate("js.announcement_cancelled"));
       refreshActions();
     } catch (error) {
-      setStatusText(error.message);
+      setStatusText(error.message, "error");
     }
   });
 }
@@ -251,30 +250,45 @@ function initGpioPauseButton() {
       });
       const paused = response.paused;
       gpioPauseButton.dataset.paused = String(paused);
-      gpioPauseButton.classList.toggle("btn-paused", paused);
-      gpioPauseButton.classList.toggle("btn-active", !paused);
-      gpioPauseButton.textContent = window.translate(
+      setControlState(gpioPauseButton, paused ? "paused" : "active", window.translate(
         paused ? "js.resume_room_input" : "js.pause_room_input",
-      );
+      ));
       setStatusText(window.translate(
         paused ? "js.room_input_paused" : "js.room_input_active",
       ));
       refreshActions();
     } catch (error) {
-      setStatusText(error.message);
+      setStatusText(error.message, "error");
     }
   });
+}
+
+function setControlState(button, state, actionLabel) {
+  const stateLabels = {
+    active: "js.state_active",
+    paused: "js.state_paused",
+    idle: "js.state_idle",
+    finished: "js.state_finished",
+  };
+  button.dataset.controlState = state;
+  button.classList.toggle("btn-active", state === "active");
+  button.classList.toggle("btn-paused", state === "paused");
+  button.classList.toggle("btn-inactive", state === "idle" || state === "finished");
+  button.querySelector(".control-state-label").textContent = window.translate(stateLabels[state]);
+  button.querySelector(".control-action-label").textContent = actionLabel;
 }
 
 function updateTimerPauseButton(settings) {
   if (!timerPauseButton) return;
   const paused = Boolean(settings.timer_paused_at);
+  const finished = Boolean(settings.room_completed_at || settings.room_failed_at);
+  const started = Boolean(settings.timer_started_at);
+  const state = !started ? "idle" : finished ? "finished" : paused ? "paused" : "active";
   timerPauseButton.dataset.paused = String(paused);
-  timerPauseButton.classList.toggle("btn-paused", paused);
-  timerPauseButton.classList.toggle("btn-active", !paused);
-  timerPauseButton.textContent = window.translate(
+  timerPauseButton.disabled = !started || finished;
+  setControlState(timerPauseButton, state, window.translate(
     paused ? "js.resume_timer" : "js.pause_timer",
-  );
+  ));
 }
 
 function initTimerPauseButton() {
@@ -283,7 +297,6 @@ function initTimerPauseButton() {
   timerPauseButton.addEventListener("click", async () => {
     try {
       const settings = await post("/admin/timer/pause");
-      updateTimerPauseButton(settings);
       updateActiveTimerSnapshot(settings);
       updateActiveTimerDisplay();
       setStatusText(window.translate(
@@ -291,7 +304,7 @@ function initTimerPauseButton() {
       ));
       refreshActions();
     } catch (error) {
-      setStatusText(error.message);
+      setStatusText(error.message, "error");
     }
   });
 }
@@ -303,7 +316,7 @@ function initGpioButtons() {
         await post(`/admin/gpio/${button.dataset.gpio}/${button.dataset.state}`);
         setStatusText(`${button.dataset.gpio} turned ${button.dataset.state}.`);
       } catch (error) {
-        setStatusText(error.message);
+        setStatusText(error.message, "error");
       }
     });
   });
@@ -323,7 +336,7 @@ function initGpioOutputActionButtons() {
           ),
         }));
       } catch (error) {
-        setStatusText(error.message);
+        setStatusText(error.message, "error");
       }
     });
   });
@@ -337,8 +350,12 @@ function initTimerActionButtons() {
         const settings = await post(`/admin/timer/${button.dataset.timerAction}`);
         setStatusText(
           button.dataset.timerAction === "start"
-            ? window.translate("js.timer_started")
-            : window.translate("js.timer_reset"),
+            ? window.translate("js.timer_started", {
+              duration: adminDom.formatClockDuration(adminDom.getTimerBaseSeconds(settings)),
+            })
+            : window.translate("js.timer_reset", {
+              duration: adminDom.formatClockDuration(adminDom.getTimerBaseSeconds(settings)),
+            }),
         );
         clearActionLogCache();
         updateActiveTimerSnapshot(settings);
@@ -347,7 +364,7 @@ function initTimerActionButtons() {
         refreshHints();
         refreshActions();
       } catch (error) {
-        setStatusText(error.message);
+        setStatusText(error.message, "error");
       }
     });
   });
@@ -384,7 +401,7 @@ function initTimerAdjustButtons() {
           || !Number.isInteger(remainingSeconds) || remainingSeconds < 0 || remainingSeconds > 59
           || (minutes === 0 && remainingSeconds === 0)
         ) {
-          setStatusText(window.translate("js.valid_adjustment"));
+          setStatusText(window.translate("js.valid_adjustment"), "error");
           return;
         }
         seconds = (minutes * 60 + remainingSeconds) * Number(button.dataset.adjustCombined);
@@ -401,7 +418,7 @@ function initTimerAdjustButtons() {
         refreshActions();
         refreshActiveTimer();
       } catch (err) {
-        setStatusText(err.message);
+        setStatusText(err.message, "error");
       }
     });
   });
@@ -417,7 +434,7 @@ function initCompleteRoomButton() {
       const settings = await post("/admin/complete");
       showRoomResultDialog(settings, settings.room_completed_at);
     } catch (error) {
-      setStatusText(error.message);
+      setStatusText(error.message, "error");
     }
   });
 }
@@ -432,7 +449,7 @@ function initFailRoomButton() {
       const settings = await post("/admin/fail");
       showRoomResultDialog(settings, settings.room_failed_at);
     } catch (error) {
-      setStatusText(error.message);
+      setStatusText(error.message, "error");
     }
   });
 }
@@ -441,7 +458,7 @@ function showRoomResultDialog(settings, endedAt) {
   const extraTimeSeconds = Number(settings.extra_time_seconds || 0);
   const penaltyTimeSeconds = Number(settings.penalty_time_seconds || 0);
   const timeTaken = elapsedSeconds(settings.timer_started_at, endedAt) + penaltyTimeSeconds;
-  const timeRemaining = (3600 + extraTimeSeconds) - timeTaken;
+  const timeRemaining = (adminDom.getTimerBaseSeconds(settings) + extraTimeSeconds) - timeTaken;
   setCompletionMessage(
     timeRemaining >= 0
       ? window.translate("js.completion_time_left", {
@@ -474,7 +491,7 @@ async function sendHint() {
     setStatusText(window.translate("js.announcement_sent"));
     refreshActions();
   } catch (error) {
-    setStatusText(error.message);
+    setStatusText(error.message, "error");
   }
 }
 
@@ -551,7 +568,7 @@ function initHintPresetButton() {
   sendHintPresetButton.addEventListener("click", async () => {
     const presetId = hintPresetSelect.value;
     if (!presetId) {
-      setStatusText(window.translate("js.select_hint"));
+      setStatusText(window.translate("js.select_hint"), "error");
       return;
     }
     try {
@@ -561,7 +578,7 @@ function initHintPresetButton() {
       setStatusText(window.translate("js.saved_hint_sent"));
       refreshActions();
     } catch (error) {
-      setStatusText(error.message);
+      setStatusText(error.message, "error");
     }
   });
 }
@@ -607,6 +624,8 @@ function initCompletionDialogClose() {
 }
 
 function initPage() {
+  if (activeTimerSnapshot) updateTimerPauseButton(activeTimerSnapshot);
+  updateActiveTimerDisplay();
   initGpioPauseButton();
   initTimerPauseButton();
   initGpioButtons();

@@ -5,25 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ settings.title }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='7') }}">
+    {% include "includes/admin_theme_head.html" %}
   </head>
   <body class="admin-page">
     <main class="panel admin-panel">
       {% include "includes/admin_navigation.html" %}
       <p id="status" role="status"></p>
       <div id="control-grid" class="control-grid two-column-grid">
+        <div class="control-sidebar">
+          {% include "includes/admin_cards/gpio.html" %}
+          {% include "includes/admin_cards/timer.html" %}
+        </div>
         {% include "includes/admin_cards/announcement.html" %}
-        {% include "includes/admin_cards/timer.html" %}
-        {% include "includes/admin_cards/gpio.html" %}
       </div>
+      <section id="action-log" class="action-log">
+        <h3>{{ t("admin.action_log") }}</h3>
+        <ul id="action-log-list">
+          <li id="no-actions">{{ t("admin.no_actions") }}</li>
+        </ul>
+      </section>
     </main>
     {% include "includes/admin_dialogs.html" %}
-    <section id="action-log" class="action-log">
-      <h3>{{ t("admin.action_log") }}</h3>
-      <ul id="action-log-list">
-        <li id="no-actions">{{ t("admin.no_actions") }}</li>
-      </ul>
-    </section>
-    {% include "includes/language_selector.html" %}
+    {% include "includes/donate_widget.html" %}
     {% include "includes/admin_scripts.html" %}
   </body>
 </html>

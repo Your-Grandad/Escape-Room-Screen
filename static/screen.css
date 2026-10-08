@@ -195,9 +195,9 @@ body {
 }
 
 .announcement {
-  background: var(--accent-colour);
+  background: var(--background-colour);
   bottom: 2rem;
-  color: #102a43;
+  color: var(--accent-colour);
   left: 50%;
   max-width: min(90vw, 60rem);
   padding: 1rem 2rem;
@@ -214,7 +214,16 @@ body {
 }
 
 .announcement img:not([hidden]),
-.announcement video:not([hidden]),
+.announcement video:not([hidden]){
+  border-radius: .5rem;
+  display: block;
+  margin: .75rem auto 0;
+  max-height: 50vh;
+  max-width: 100%;
+  object-fit: contain;
+  margin-bottom: 20vh;
+}
+
 .announcement audio:not([hidden]) {
   border-radius: .5rem;
   display: block;
@@ -441,6 +450,16 @@ body {
 
 .language-selector {
   margin-top: 1.25rem;
+}
+
+.donate-widget {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  justify-content: flex-end;
+  margin-top: .75rem;
+  text-align: right;
 }
 
 .language-selector label {

@@ -185,6 +185,8 @@ def initialize(database_path: Path | str) -> None:
         for column in (
             "timer_started_at TEXT",
             "timer_paused_at TEXT",
+            "timer_duration_seconds INTEGER NOT NULL DEFAULT 3600 CHECK (timer_duration_seconds > 0)",
+            "timer_run_duration_seconds INTEGER NOT NULL DEFAULT 3600 CHECK (timer_run_duration_seconds > 0)",
             "room_completed_at TEXT",
             "room_failed_at TEXT",
             "announcement TEXT",

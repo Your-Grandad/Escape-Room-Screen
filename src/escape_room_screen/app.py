@@ -39,6 +39,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         MAX_CONTENT_LENGTH=max_upload_mb * 1024 * 1024,
         MAX_UPLOAD_MB=max_upload_mb,
         DEFAULT_LOCALE=os.environ.get("DEFAULT_LOCALE", "en"),
+        HIDE_DONATIONS=os.environ.get("HIDE_DONATIONS", "false").strip().lower() == "true",
         SUPPORTED_LOCALES=("en", "es"),
         LOCALE_NAMES={"en": "English", "es": "Español"},
     )

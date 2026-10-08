@@ -5,23 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("login.title") }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='screen.css') }}">
+    {% include "includes/admin_theme_head.html" %}
   </head>
   <body class="admin-page">
     <main class="panel login-panel">
-      <h1>{{ t("login.title") }}</h1>
+      <div class="login-header">
+        <h1>{{ t("login.title") }}</h1>
+        {% include "includes/admin_theme_toggle.html" %}
+      </div>
       {% if password_changed %}<p>{{ t("login.password_changed") }}</p>{% endif %}
       {% if error %}<p class="error">{{ error }}</p>{% endif %}
       <form method="post">
         <label>{{ t("login.username") }} <input name="username" autocomplete="username" required autofocus></label>
-        <label>{{ t("login.password") }} <input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
-        <button id="show-password" class="icon-button" type="button" aria-label="{{ t("login.show_password") }}" title="{{ t("login.show_password") }}" aria-pressed="false" data-show-label="{{ t("login.show_password") }}" data-hide-label="{{ t("login.hide_password") }}">
-          {% include "includes/icons/eye.html" %}
-          {% include "includes/icons/eye_off.html" %}
-          <span class="sr-only">{{ t("login.show_password") }}</span>
-        </button>
+        <div class="login-password-field">
+          <label>{{ t("login.password") }} <input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
+          <button id="show-password" class="icon-button" type="button" aria-label="{{ t("login.show_password") }}" title="{{ t("login.show_password") }}" aria-pressed="false" data-show-label="{{ t("login.show_password") }}" data-hide-label="{{ t("login.hide_password") }}">
+            {% include "includes/icons/eye.html" %}
+            {% include "includes/icons/eye_off.html" %}
+            <span class="sr-only">{{ t("login.show_password") }}</span>
+          </button>
+        </div>
         <button type="submit">{{ t("login.sign_in") }}</button>
       </form>
       {% include "includes/language_selector.html" %}
+      {% include "includes/donate_widget.html" %}
     </main>
     <script src="{{ url_for('static', filename='login.js', v='1') }}"></script>
   </body>

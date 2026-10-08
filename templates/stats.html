@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("stats.title") }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='6') }}">
+    {% include "includes/admin_theme_head.html" %}
   </head>
   <body class="admin-page">
     <main class="panel">
@@ -52,9 +53,9 @@
       </div>
 
       <div class="leaderboard-wrapper">
-        <table id="leaderboard-table" class="leaderboard" role="table">
+        <table id="leaderboard-table" class="leaderboard" role="table" aria-label="{{ t("stats.leaderboard") }}">
           <thead>
-            <tr><th>#</th><th>{{ t("stats.team") }}</th><th>{{ t("stats.status") }}</th><th>{{ t("stats.players") }}</th><th>{{ t("stats.time") }}</th><th>{{ t("stats.remaining") }}</th><th>{{ t("stats.hints") }}</th><th>{{ t("stats.penalties") }}</th><th>{{ t("stats.finished") }}</th></tr>
+            <tr><th scope="col">#</th><th scope="col">{{ t("stats.team") }}</th><th scope="col">{{ t("stats.status") }}</th><th scope="col">{{ t("stats.players") }}</th><th scope="col">{{ t("stats.time") }}</th><th scope="col">{{ t("stats.remaining") }}</th><th scope="col">{{ t("stats.hints") }}</th><th scope="col">{{ t("stats.penalties") }}</th><th scope="col">{{ t("stats.finished") }}</th></tr>
           </thead>
           <tbody>
             {% for entry in leaderboard %}
@@ -195,7 +196,7 @@
       })();
       </script>
 
-      {% include "includes/language_selector.html" %}
+      {% include "includes/donate_widget.html" %}
     </main>
     {% include "includes/admin_scripts.html" %}
   </body>

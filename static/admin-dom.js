@@ -19,6 +19,42 @@ window.AdminDom = (() => {
     return `${negative ? "-" : ""}${minutes}:${remainingSeconds}`;
   }
 
+  function getTimerBaseSeconds(settings) {
+    return Number((settings.timer_started_at
+      ? settings.timer_run_duration_seconds
+      : settings.timer_duration_seconds) ?? 3600);
+  }
+
+  function getTimerPresentation(settings, now = Date.now()) {
+    const state = !settings.timer_started_at
+      ? "idle"
+      : settings.room_failed_at
+        ? "failed"
+        : settings.room_completed_at
+          ? "completed"
+          : settings.timer_paused_at
+            ? "paused"
+            : "running";
+    const stoppedAt = settings.room_failed_at
+      || settings.room_completed_at
+      || settings.timer_paused_at;
+    const elapsedSeconds = settings.timer_started_at
+      ? Math.max(0, Math.floor(
+        (new Date(stoppedAt || now) - new Date(settings.timer_started_at)) / 1000,
+      )) + Number(settings.penalty_time_seconds || 0)
+      : 0;
+    const remainingSeconds = Math.max(
+      0,
+      getTimerBaseSeconds(settings) + Number(settings.extra_time_seconds || 0) - elapsedSeconds,
+    );
+    const urgency = state !== "running" || remainingSeconds > 300
+      ? "normal"
+      : remainingSeconds <= 60
+        ? "critical"
+        : "warning";
+    return { state, elapsedSeconds, remainingSeconds, urgency };
+  }
+
   function createHintHistoryItem(hint, index) {
     const item = document.createElement("li");
     const count = document.createElement("span");
@@ -98,6 +134,8 @@ window.AdminDom = (() => {
     createHintHistoryItem,
     formatClockDuration,
     formatDuration,
+    getTimerBaseSeconds,
+    getTimerPresentation,
     renderActionLog,
     renderHintHistory,
   };

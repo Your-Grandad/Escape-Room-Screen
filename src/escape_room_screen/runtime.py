@@ -1,11 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import subprocess
 from threading import Timer
 
 from flask import Flask
 
 from .display import (
-    TIMER_DURATION_SECONDS,
     DisplaySettings,
     DisplaySettingsStore,
 )
@@ -106,7 +105,12 @@ class DisplayRuntime:
             0,
             (datetime.now(timezone.utc) - started_at).total_seconds(),
         )
-        target_seconds = (60 - settings.auto_hint_remaining_minutes) * 60
+        target_seconds = (
+            settings.timer_base_seconds
+            + settings.extra_time_seconds
+            - settings.penalty_time_seconds
+            - settings.auto_hint_remaining_minutes * 60
+        )
         delay = max(0, target_seconds - elapsed_seconds)
 
         def send_if_room_is_incomplete() -> None:
@@ -138,7 +142,7 @@ class DisplayRuntime:
         if started_at.tzinfo is None:
             started_at = started_at.replace(tzinfo=timezone.utc)
         deadline = started_at.timestamp() + (
-            TIMER_DURATION_SECONDS
+            settings.timer_base_seconds
             + settings.extra_time_seconds
             - settings.penalty_time_seconds
         )
@@ -230,7 +234,10 @@ class DisplayRuntime:
         if settings is None:
             self.store.record_gpio_event(pin, event, accepted=False)
             return
-        self.record_action("timer", "Started 60-minute timer from GPIO")
+        self.record_action(
+            "timer",
+            f"Started timer ({timedelta(seconds=settings.timer_base_seconds)}) from GPIO",
+        )
         self.publish(settings)
         self.schedule_timer_events(settings)
         self.store.record_gpio_event(pin, event, accepted=True)

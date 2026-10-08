@@ -1,6 +1,7 @@
 import secrets
 import subprocess
 import re
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -304,7 +305,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                     request.form.get("remove_logo_image") == "on"
                     and uploaded_logo is None
                 )
-                display_values = {
+                display_values: dict[str, object] = {
                     name: request.form.get(name, "")
                     for name in (
                         "title",
@@ -316,6 +317,11 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                 for name in ("completion_message", "failure_message"):
                     if name in request.form:
                         display_values[name] = request.form[name]
+                duration_fields = ("timer_hours", "timer_minutes", "timer_seconds")
+                if any(name in request.form for name in duration_fields):
+                    display_values["timer_duration_seconds"] = store.parse_timer_duration(
+                        *(request.form.get(name) for name in duration_fields)
+                    )
                 settings = store.update(
                     display_values,
                     background_image=uploaded_image,
@@ -719,7 +725,10 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         try:
             if action == "start":
                 settings = store.start_timer()
-                runtime.record_action("timer", "Started 60-minute timer")
+                runtime.record_action(
+                    "timer",
+                    f"Started timer ({timedelta(seconds=settings.timer_base_seconds)})",
+                )
             elif action == "reset":
                 settings = store.reset_timer()
                 runtime.record_action("timer", "Reset timer")
