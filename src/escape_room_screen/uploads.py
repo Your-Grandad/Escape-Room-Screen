@@ -28,6 +28,17 @@ def save_background_image(
     )
 
 
+def save_logo_image(
+    upload: FileStorage | None,
+    upload_folder: Path,
+) -> str | None:
+    return _save_image_upload(
+        upload,
+        upload_folder,
+        "Logo image must be a PNG, JPEG, GIF, or WebP file.",
+    )
+
+
 def save_hint_media(
     upload: FileStorage | None,
     kind: str,
@@ -46,15 +57,33 @@ def save_hint_media(
         if extension not in VIDEO_EXTENSIONS:
             raise ValueError("Hint video must be an MP4, WebM, or MOV file.")
         return _save_upload(upload, upload_folder, extension)
+    if kind == "audio":
+        return _save_sound_upload(
+            upload,
+            upload_folder,
+            "Hint audio must be one of: MP3, WAV, OGG, M4A, AAC.",
+        )
     raise ValueError("Unsupported hint media kind.")
 
 
 def save_sound(upload: FileStorage | None, upload_folder: Path) -> str | None:
     if upload is None or not upload.filename:
         return None
+    return _save_sound_upload(
+        upload,
+        upload_folder,
+        "Sound file must be one of: MP3, WAV, OGG, M4A, AAC.",
+    )
+
+
+def _save_sound_upload(
+    upload: FileStorage,
+    upload_folder: Path,
+    error_message: str,
+) -> str:
     extension = Path(upload.filename).suffix.lower()
     if extension not in SOUND_EXTENSIONS:
-        raise ValueError("Sound file must be one of: MP3, WAV, OGG, M4A, AAC.")
+        raise ValueError(error_message)
     header = upload.stream.read(12)
     upload.stream.seek(0)
     if extension == ".wav" and not header.startswith(b"RIFF"):

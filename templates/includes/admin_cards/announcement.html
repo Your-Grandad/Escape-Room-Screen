@@ -5,6 +5,7 @@
     <p id="current-announcement-message">{{ settings.announcement or "" }}</p>
     <img id="current-announcement-image" class="hint-media-preview" src="{% if settings.announcement_media_type == 'image' %}{{ url_for('uploaded_file', filename=settings.announcement_media_filename) }}{% endif %}" alt="{{ t("announcement.hint_image") }}" {% if settings.announcement_media_type != 'image' %}hidden{% endif %}>
     <video id="current-announcement-video" class="hint-media-preview" src="{% if settings.announcement_media_type == 'video' %}{{ url_for('uploaded_file', filename=settings.announcement_media_filename) }}{% endif %}" controls {% if settings.announcement_media_type != 'video' %}hidden{% endif %}></video>
+    <audio id="current-announcement-audio" class="hint-audio-preview" src="{% if settings.announcement_media_type == 'audio' %}{{ url_for('uploaded_file', filename=settings.announcement_media_filename) }}{% endif %}" controls {% if settings.announcement_media_type != 'audio' %}hidden{% endif %}></audio>
     <form id="cancel-announcement-form" action="{{ url_for('cancel_announcement') }}" method="post" class="inline-form">
       <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
       <button type="submit">{{ t("announcement.cancel") }}</button>
@@ -17,14 +18,29 @@
   </form>
   <div class="preset-hint-picker">
     <h3>{{ t("announcement.saved_title") }}</h3>
+    <label>{{ t("announcement.search") }}
+      <input id="hint-preset-search" type="search" placeholder="{{ t("announcement.search_placeholder") }}">
+    </label>
+    <label>{{ t("announcement.category") }}
+      <select id="hint-category-filter">
+        <option value="">{{ t("announcement.all_categories") }}</option>
+        {% for category in hint_categories %}
+          <option value="{{ category|lower }}">{{ category }}</option>
+        {% endfor %}
+        {% if hint_presets | selectattr("category", "equalto", "") | list %}
+          <option value="__uncategorised__">{{ t("hints.uncategorised") }}</option>
+        {% endif %}
+      </select>
+    </label>
     <label>{{ t("announcement.choose") }}
       <select id="hint-preset-select">
         <option value="">{{ t("announcement.select") }}</option>
         {% for preset in hint_presets %}
-          <option value="{{ preset.id }}" data-kind="{{ preset.kind }}">{{ preset.title }} ({{ preset.kind }})</option>
+          <option value="{{ preset.id }}" data-kind="{{ preset.kind }}" data-category="{{ preset.category|lower if preset.category else '__uncategorised__' }}" data-search="{{ (preset.title ~ ' ' ~ (preset.message or '') ~ ' ' ~ preset.category)|lower }}">{{ preset.title }}{% if preset.category %} — {{ preset.category }}{% endif %} ({{ preset.kind }})</option>
         {% endfor %}
       </select>
     </label>
+    <p id="hint-preset-no-results" hidden>{{ t("announcement.no_matches") }}</p>
     <button id="send-hint-preset" type="button" data-csrf="{{ csrf_token }}">{{ t("announcement.send_saved") }}</button>
     <p><a href="{{ url_for('hint_library') }}">{{ t("announcement.manage") }}</a></p>
   </div>
@@ -38,6 +54,8 @@
           <img class="hint-media-preview" src="{{ url_for('uploaded_file', filename=hint.media_filename) }}" alt="{{ t("announcement.hint_image") }}">
         {% elif hint.media_type == 'video' %}
           <video class="hint-media-preview" src="{{ url_for('uploaded_file', filename=hint.media_filename) }}" controls></video>
+        {% elif hint.media_type == 'audio' %}
+          <audio class="hint-audio-preview" src="{{ url_for('uploaded_file', filename=hint.media_filename) }}" controls></audio>
         {% endif %}
         <time class="hint-timer" datetime="PT{{ hint.timer_remaining_seconds }}S">{{ t("js.timer_value", value="%02d:%02d"|format(hint.timer_remaining_seconds // 60, hint.timer_remaining_seconds % 60)) }}</time>
         <time datetime="{{ hint.given_at }}">{{ hint.given_at }} UTC</time>

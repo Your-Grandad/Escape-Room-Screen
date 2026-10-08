@@ -5,6 +5,7 @@ const currentAnnouncement = document.querySelector("#current-announcement");
 const currentAnnouncementMessage = document.querySelector("#current-announcement-message");
 const currentAnnouncementImage = document.querySelector("#current-announcement-image");
 const currentAnnouncementVideo = document.querySelector("#current-announcement-video");
+const currentAnnouncementAudio = document.querySelector("#current-announcement-audio");
 const cancelAnnouncementForm = document.querySelector("#cancel-announcement-form");
 const previewDialog = document.querySelector("#preview-dialog");
 const completionDialog = document.querySelector("#completion-dialog");
@@ -19,6 +20,7 @@ const actionLogList = document.querySelector("#action-log-list");
 const actionLogStorageKey = "admin-action-log-cache";
 const adminDom = window.AdminDom;
 let activeTimerSnapshot = null;
+let shownRoomResultKey = null;
 
 async function post(path, body) {
   const response = await fetch(path, {
@@ -66,16 +68,21 @@ function updateActiveTimerDisplay() {
     return;
   }
   const startedAt = new Date(activeTimerSnapshot.timer_started_at);
-  const completedAt = activeTimerSnapshot.room_completed_at || activeTimerSnapshot.timer_paused_at
-    ? new Date(activeTimerSnapshot.room_completed_at || activeTimerSnapshot.timer_paused_at)
+  const endedAt = activeTimerSnapshot.room_completed_at
+    || activeTimerSnapshot.room_failed_at
+    || activeTimerSnapshot.timer_paused_at;
+  const completedAt = endedAt
+    ? new Date(endedAt)
     : new Date();
   const extraTimeSeconds = Number(activeTimerSnapshot.extra_time_seconds || 0);
   const penaltyTimeSeconds = Number(activeTimerSnapshot.penalty_time_seconds || 0);
   const elapsedSeconds = Math.max(0, Math.floor((completedAt - startedAt) / 1000)) + penaltyTimeSeconds;
   const remainingSeconds = Math.max(0, (3600 + extraTimeSeconds) - elapsedSeconds);
-  activeTimerState.textContent = activeTimerSnapshot.room_completed_at
-    ? window.translate("js.timer_completed")
-    : window.translate("js.timer_running");
+  activeTimerState.textContent = activeTimerSnapshot.room_failed_at
+    ? window.translate("js.timer_failed")
+    : activeTimerSnapshot.room_completed_at
+      ? window.translate("js.timer_completed")
+      : window.translate("js.timer_running");
   activeTimerElapsed.textContent = window.translate("js.elapsed", {
     value: adminDom.formatClockDuration(elapsedSeconds),
   });
@@ -87,17 +94,10 @@ function updateActiveTimerDisplay() {
 async function refreshActiveTimer() {
   if (!activeTimerState || !activeTimerElapsed || !activeTimerRemaining) return;
   try {
-    const response = await fetch("/api/display", { credentials: "same-origin" });
+    const response = await fetch("/api/display", { credentials: "same-origin"     });
     if (!response.ok) throw new Error(window.translate("js.failed_to_fetch_timer"));
     const payload = await response.json();
-    activeTimerSnapshot = {
-      timer_started_at: payload.timer_started_at,
-      timer_paused_at: payload.timer_paused_at,
-      room_completed_at: payload.room_completed_at,
-      extra_time_seconds: payload.extra_time_seconds,
-      penalty_time_seconds: payload.penalty_time_seconds,
-    };
-    updateActiveTimerDisplay();
+    applyActiveTimerSettings(payload);
   } catch (error) {
     console.warn("refreshActiveTimer error", error);
   }
@@ -120,9 +120,39 @@ function updateActiveTimerSnapshot(settings) {
     timer_started_at: settings.timer_started_at,
     timer_paused_at: settings.timer_paused_at,
     room_completed_at: settings.room_completed_at,
+    room_failed_at: settings.room_failed_at,
     extra_time_seconds: settings.extra_time_seconds,
     penalty_time_seconds: settings.penalty_time_seconds,
   };
+}
+
+function applyActiveTimerSettings(settings) {
+  const previousSnapshot = activeTimerSnapshot;
+  updateActiveTimerSnapshot(settings);
+  updateActiveTimerDisplay();
+  const justFailed = Boolean(
+    previousSnapshot
+    && previousSnapshot.timer_started_at === settings.timer_started_at
+    && !previousSnapshot.room_failed_at
+    && !previousSnapshot.room_completed_at
+    && settings.room_failed_at,
+  );
+  if (!justFailed || !completionDialog || !completionTime) return;
+  const resultKey = `${settings.timer_started_at}:${settings.room_failed_at}`;
+  if (shownRoomResultKey === resultKey) return;
+  showRoomResultDialog(settings, settings.room_failed_at);
+}
+
+function initDisplayEventStream() {
+  if (!window.EventSource || !activeTimerState) return;
+  const eventSource = new EventSource("/events");
+  eventSource.addEventListener("display", (event) => {
+    try {
+      applyActiveTimerSettings(JSON.parse(event.data));
+    } catch (error) {
+      console.warn("display event error", error);
+    }
+  });
 }
 
 function updateCurrentAnnouncement(settings) {
@@ -131,6 +161,7 @@ function updateCurrentAnnouncement(settings) {
     || !currentAnnouncementMessage
     || !currentAnnouncementImage
     || !currentAnnouncementVideo
+    || !currentAnnouncementAudio
   ) {
     return;
   }
@@ -141,6 +172,7 @@ function updateCurrentAnnouncement(settings) {
   currentAnnouncement.hidden = !hasAnnouncement;
   if (!hasAnnouncement) {
     currentAnnouncementVideo.pause();
+    currentAnnouncementAudio.pause();
     return;
   }
 
@@ -152,6 +184,9 @@ function updateCurrentAnnouncement(settings) {
     currentAnnouncementImage.hidden = false;
     currentAnnouncementVideo.hidden = true;
     currentAnnouncementVideo.removeAttribute("src");
+    currentAnnouncementAudio.pause();
+    currentAnnouncementAudio.hidden = true;
+    currentAnnouncementAudio.removeAttribute("src");
     return;
   }
 
@@ -162,6 +197,22 @@ function updateCurrentAnnouncement(settings) {
     currentAnnouncementVideo.hidden = false;
     currentAnnouncementImage.hidden = true;
     currentAnnouncementImage.removeAttribute("src");
+    currentAnnouncementAudio.pause();
+    currentAnnouncementAudio.hidden = true;
+    currentAnnouncementAudio.removeAttribute("src");
+    return;
+  }
+
+  if (settings.announcement_media_type === "audio") {
+    currentAnnouncementAudio.src = `/uploads/${encodeURIComponent(
+      settings.announcement_media_filename,
+    )}`;
+    currentAnnouncementAudio.hidden = false;
+    currentAnnouncementImage.hidden = true;
+    currentAnnouncementImage.removeAttribute("src");
+    currentAnnouncementVideo.pause();
+    currentAnnouncementVideo.hidden = true;
+    currentAnnouncementVideo.removeAttribute("src");
     return;
   }
 
@@ -169,6 +220,9 @@ function updateCurrentAnnouncement(settings) {
   currentAnnouncementImage.removeAttribute("src");
   currentAnnouncementVideo.hidden = true;
   currentAnnouncementVideo.removeAttribute("src");
+  currentAnnouncementAudio.pause();
+  currentAnnouncementAudio.hidden = true;
+  currentAnnouncementAudio.removeAttribute("src");
 }
 
 function initCancelAnnouncementForm() {
@@ -299,16 +353,49 @@ function initTimerActionButtons() {
   });
 }
 
+function formatAdjustmentDuration(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (minutes > 0) {
+    parts.push(window.translate(
+      minutes === 1 ? "js.duration_minute" : "js.duration_minutes",
+      { value: minutes },
+    ));
+  }
+  if (seconds > 0) {
+    parts.push(window.translate(
+      seconds === 1 ? "js.duration_second" : "js.duration_seconds",
+      { value: seconds },
+    ));
+  }
+  return parts.join(" ");
+}
+
 function initTimerAdjustButtons() {
-  document.querySelectorAll("[data-adjust]").forEach((button) => {
+  document.querySelectorAll("[data-adjust-combined], [data-adjust-seconds]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const seconds = Number(button.dataset.adjust);
+      let seconds = Number(button.dataset.adjustSeconds);
+      if (button.dataset.adjustCombined) {
+        const minutes = Number(document.querySelector("#timer-adjust-minutes")?.value);
+        const remainingSeconds = Number(document.querySelector("#timer-adjust-seconds")?.value);
+        if (
+          !Number.isInteger(minutes) || minutes < 0 || minutes > 59
+          || !Number.isInteger(remainingSeconds) || remainingSeconds < 0 || remainingSeconds > 59
+          || (minutes === 0 && remainingSeconds === 0)
+        ) {
+          setStatusText(window.translate("js.valid_adjustment"));
+          return;
+        }
+        seconds = (minutes * 60 + remainingSeconds) * Number(button.dataset.adjustCombined);
+      }
       try {
         await post("/admin/timer/adjust", { seconds });
+        const duration = formatAdjustmentDuration(Math.abs(seconds));
         setStatusText(
           seconds >= 0
-            ? window.translate("js.added_seconds_total", { seconds })
-            : window.translate("js.added_seconds_taken", { seconds: -seconds }),
+            ? window.translate("js.added_time_total", { duration })
+            : window.translate("js.added_time_taken", { duration }),
         );
         refreshHints();
         refreshActions();
@@ -320,34 +407,6 @@ function initTimerAdjustButtons() {
   });
 }
 
-function initTimerAdjustForm() {
-  const timerAdjustForm = document.querySelector("#timer-adjust-form");
-  if (!timerAdjustForm) return;
-
-  timerAdjustForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const secondsField = document.querySelector("#timer-adjust-seconds");
-    const seconds = Number(secondsField.value);
-    if (!Number.isFinite(seconds)) {
-      setStatusText(window.translate("js.valid_seconds"));
-      return;
-    }
-    try {
-      await post("/admin/timer/adjust", { seconds });
-      setStatusText(
-        seconds >= 0
-          ? window.translate("js.added_seconds_total", { seconds })
-          : window.translate("js.added_seconds_taken", { seconds: -seconds }),
-      );
-      refreshHints();
-      refreshActions();
-      refreshActiveTimer();
-    } catch (err) {
-      setStatusText(err.message);
-    }
-  });
-}
-
 function initCompleteRoomButton() {
   const completeRoomButton = document.querySelector("#complete-room");
   if (!completeRoomButton || !completionDialog || !completionTime) return;
@@ -356,29 +415,49 @@ function initCompleteRoomButton() {
     event.preventDefault();
     try {
       const settings = await post("/admin/complete");
-      const extraTimeSeconds = Number(settings.extra_time_seconds || 0);
-      const penaltyTimeSeconds = Number(settings.penalty_time_seconds || 0);
-      const timeTaken = elapsedSeconds(settings.timer_started_at, settings.room_completed_at) + penaltyTimeSeconds;
-      const timeRemaining = (3600 + extraTimeSeconds) - timeTaken;
-      setCompletionMessage(
-        timeRemaining >= 0
-          ? window.translate("js.completion_time_left", {
-            taken: adminDom.formatDuration(timeTaken),
-            remaining: adminDom.formatDuration(timeRemaining),
-          })
-          : window.translate("js.completion_overtime", {
-            taken: adminDom.formatDuration(timeTaken),
-            remaining: adminDom.formatDuration(-timeRemaining),
-          }),
-      );
-      completionDialog.showModal();
-      updateActiveTimerSnapshot(settings);
-      updateActiveTimerDisplay();
-      refreshActions();
+      showRoomResultDialog(settings, settings.room_completed_at);
     } catch (error) {
       setStatusText(error.message);
     }
   });
+}
+
+function initFailRoomButton() {
+  const failRoomButton = document.querySelector("#fail-room");
+  if (!failRoomButton || !completionDialog || !completionTime) return;
+
+  failRoomButton.addEventListener("click", async (event) => {
+    event.preventDefault();
+    try {
+      const settings = await post("/admin/fail");
+      showRoomResultDialog(settings, settings.room_failed_at);
+    } catch (error) {
+      setStatusText(error.message);
+    }
+  });
+}
+
+function showRoomResultDialog(settings, endedAt) {
+  const extraTimeSeconds = Number(settings.extra_time_seconds || 0);
+  const penaltyTimeSeconds = Number(settings.penalty_time_seconds || 0);
+  const timeTaken = elapsedSeconds(settings.timer_started_at, endedAt) + penaltyTimeSeconds;
+  const timeRemaining = (3600 + extraTimeSeconds) - timeTaken;
+  setCompletionMessage(
+    timeRemaining >= 0
+      ? window.translate("js.completion_time_left", {
+        taken: adminDom.formatDuration(timeTaken),
+        remaining: adminDom.formatDuration(timeRemaining),
+      })
+      : window.translate("js.completion_overtime", {
+        taken: adminDom.formatDuration(timeTaken),
+        remaining: adminDom.formatDuration(-timeRemaining),
+      }),
+  );
+  shownRoomResultKey = `${settings.timer_started_at}:${endedAt}`;
+  if (!completionDialog.open) completionDialog.showModal();
+  updateActiveTimerSnapshot(settings);
+  updateActiveTimerDisplay();
+  refreshActions();
 }
 
 async function sendHint() {
@@ -446,7 +525,28 @@ function initHintForm() {
 function initHintPresetButton() {
   const hintPresetSelect = document.querySelector("#hint-preset-select");
   const sendHintPresetButton = document.querySelector("#send-hint-preset");
+  const hintPresetSearch = document.querySelector("#hint-preset-search");
+  const hintCategoryFilter = document.querySelector("#hint-category-filter");
+  const noResults = document.querySelector("#hint-preset-no-results");
   if (!sendHintPresetButton || !hintPresetSelect) return;
+
+  const filterHintPresets = () => {
+    const query = hintPresetSearch?.value.trim().toLocaleLowerCase() || "";
+    const category = hintCategoryFilter?.value || "";
+    let visibleCount = 0;
+    for (const option of hintPresetSelect.options) {
+      if (!option.value) continue;
+      const matchesSearch = !query || option.dataset.search.includes(query);
+      const matchesCategory = !category || option.dataset.category === category;
+      option.hidden = !(matchesSearch && matchesCategory);
+      if (!option.hidden) visibleCount += 1;
+    }
+    const selectedOption = hintPresetSelect.selectedOptions[0];
+    if (selectedOption?.hidden) hintPresetSelect.value = "";
+    if (noResults) noResults.hidden = visibleCount !== 0;
+  };
+  hintPresetSearch?.addEventListener("input", filterHintPresets);
+  hintCategoryFilter?.addEventListener("change", filterHintPresets);
 
   sendHintPresetButton.addEventListener("click", async () => {
     const presetId = hintPresetSelect.value;
@@ -513,14 +613,15 @@ function initPage() {
   initGpioOutputActionButtons();
   initTimerActionButtons();
   initTimerAdjustButtons();
-  initTimerAdjustForm();
   initCompleteRoomButton();
+  initFailRoomButton();
   initHintForm();
   initHintPresetButton();
   initCancelAnnouncementForm();
   initCompletionForm();
   initDialogs();
   initCompletionDialogClose();
+  initDisplayEventStream();
   loadActionLogCache();
   refreshActiveTimer();
   refreshHints();

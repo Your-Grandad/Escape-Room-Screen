@@ -50,6 +50,12 @@ window.AdminDom = (() => {
       video.src = buildUploadUrl(hint.media_filename);
       video.controls = true;
       item.append(video);
+    } else if (hint.media_type === "audio" && hint.media_filename) {
+      const audio = document.createElement("audio");
+      audio.className = "hint-audio-preview";
+      audio.src = buildUploadUrl(hint.media_filename);
+      audio.controls = true;
+      item.append(audio);
     }
 
     item.append(timerValue, timestamp);

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("stats.title") }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='2') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='6') }}">
   </head>
   <body class="admin-page">
     <main class="panel">
@@ -13,6 +13,20 @@
         <h1>{{ t("stats.title") }}</h1>
       </div>
       {% if error %}<p class="error">{{ error }}</p>{% endif %}
+      <section aria-labelledby="completion-statistics-heading">
+        <h2 id="completion-statistics-heading">{{ t("stats.completion_statistics") }}</h2>
+        <div class="statistics-grid">
+          {% for summary in completion_statistics %}
+            <article class="statistics-card">
+              <h3>{{ t("stats." ~ summary.period) }}</h3>
+              <p class="completion-rate">{{ "%.1f" % summary.completion_rate }}%</p>
+              <p>{{ t("stats.completed_count", completed=summary.completed, total=summary.total) }}</p>
+              <p>{{ t("stats.failed_count", failed=summary.failed) }}</p>
+            </article>
+          {% endfor %}
+        </div>
+      </section>
+
       <h2>{{ t("stats.leaderboard") }}</h2>
       <p>{{ t("stats.description") }}</p>
 
@@ -27,37 +41,53 @@
             <option value="completed_at_asc">{{ t("stats.finished_earliest") }}</option>
           </select>
         </label>
+        <label>{{ t("stats.results_per_page") }}
+          <select id="leaderboard-page-size">
+            <option value="10">10</option>
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="all">{{ t("stats.all_results") }}</option>
+          </select>
+        </label>
       </div>
 
-      <table id="leaderboard-table" class="leaderboard" role="table">
-        <thead>
-          <tr><th>#</th><th>{{ t("stats.team") }}</th><th>{{ t("stats.players") }}</th><th>{{ t("stats.time") }}</th><th>{{ t("stats.remaining") }}</th><th>{{ t("stats.hints") }}</th><th>{{ t("stats.penalties") }}</th><th>{{ t("stats.finished") }}</th></tr>
-        </thead>
-        <tbody>
-          {% for entry in leaderboard %}
-            <tr data-time-taken="{{ entry.time_taken_seconds }}" data-time-remaining="{{ entry.time_remaining_seconds }}" data-penalties="{{ entry.penalties }}" data-hints="{{ entry.hints_used }}" data-completed-at="{{ entry.completed_at }}">
-              <td>{{ loop.index }}</td>
-              <td class="team-name">{{ entry.group_name }}</td>
-              <td>{{ entry.group_size }}</td>
-              <td class="time-taken">{{ (entry.time_taken_seconds // 3600)|int }}:{{ "%02d" % ((entry.time_taken_seconds % 3600) // 60) }}:{{ "%02d" % (entry.time_taken_seconds % 60) }}</td>
-              <td class="time-remaining">
-                {% if entry.time_remaining_seconds >= 0 %}
-                  {{ (entry.time_remaining_seconds // 3600)|int }}:{{ "%02d" % ((entry.time_remaining_seconds % 3600) // 60) }}:{{ "%02d" % (entry.time_remaining_seconds % 60) }}
-                {% else %}
-                  -{{ ((-entry.time_remaining_seconds) // 3600)|int }}:{{ "%02d" % (((-entry.time_remaining_seconds) % 3600) // 60) }}:{{ "%02d" % ((-entry.time_remaining_seconds) % 60) }} ({{ t("stats.overtime") }})
-                {% endif %}
-              </td>
-              <td>{{ entry.hints_used }}</td>
-              <td>{{ entry.penalties }}</td>
-              <td><time datetime="{{ entry.completed_at }}">{{ entry.completed_at }} UTC</time></td>
-            </tr>
-          {% else %}
-            <tr><td colspan="8">{{ t("stats.none") }}</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      <div class="leaderboard-wrapper">
+        <table id="leaderboard-table" class="leaderboard" role="table">
+          <thead>
+            <tr><th>#</th><th>{{ t("stats.team") }}</th><th>{{ t("stats.status") }}</th><th>{{ t("stats.players") }}</th><th>{{ t("stats.time") }}</th><th>{{ t("stats.remaining") }}</th><th>{{ t("stats.hints") }}</th><th>{{ t("stats.penalties") }}</th><th>{{ t("stats.finished") }}</th></tr>
+          </thead>
+          <tbody>
+            {% for entry in leaderboard %}
+              <tr class="result-{{ entry.outcome }}" data-outcome="{{ entry.outcome }}" data-time-taken="{{ entry.time_taken_seconds }}" data-time-remaining="{{ entry.time_remaining_seconds }}" data-penalties="{{ entry.penalties }}" data-hints="{{ entry.hints_used }}" data-completed-at="{{ entry.completed_at }}">
+                <td>{{ loop.index }}</td>
+                <td class="team-name">{{ entry.group_name }}</td>
+                <td class="result-status">{{ t("stats.completed") if entry.outcome == "completed" else t("stats.failed") }}</td>
+                <td>{{ entry.group_size }}</td>
+                <td class="time-taken">{{ (entry.time_taken_seconds // 3600)|int }}:{{ "%02d" % ((entry.time_taken_seconds % 3600) // 60) }}:{{ "%02d" % (entry.time_taken_seconds % 60) }}</td>
+                <td class="time-remaining">
+                  {% if entry.time_remaining_seconds >= 0 %}
+                    {{ (entry.time_remaining_seconds // 3600)|int }}:{{ "%02d" % ((entry.time_remaining_seconds % 3600) // 60) }}:{{ "%02d" % (entry.time_remaining_seconds % 60) }}
+                  {% else %}
+                    -{{ ((-entry.time_remaining_seconds) // 3600)|int }}:{{ "%02d" % (((-entry.time_remaining_seconds) % 3600) // 60) }}:{{ "%02d" % ((-entry.time_remaining_seconds) % 60) }} ({{ t("stats.overtime") }})
+                  {% endif %}
+                </td>
+                <td>{{ entry.hints_used }}</td>
+                <td>{{ entry.penalties }}</td>
+                <td><time datetime="{{ entry.completed_at }}">{{ entry.completed_at }} UTC</time></td>
+              </tr>
+            {% else %}
+              <tr><td colspan="9">{{ t("stats.none") }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <nav id="leaderboard-pagination" class="leaderboard-pagination" aria-label="{{ t("stats.pagination") }}" hidden>
+        <button id="leaderboard-previous" type="button">{{ t("stats.previous") }}</button>
+        <span id="leaderboard-page-status" aria-live="polite"></span>
+        <button id="leaderboard-next" type="button">{{ t("stats.next") }}</button>
+      </nav>
       <template id="leaderboard-empty-row">
-        <tr><td colspan="8">{{ t("stats.none") }}</td></tr>
+        <tr><td colspan="9">{{ t("stats.none") }}</td></tr>
       </template>
 
       <script>
@@ -67,12 +97,19 @@
         const tbody = table.querySelector('tbody');
         const filter = document.getElementById('leaderboard-filter');
         const sort = document.getElementById('leaderboard-sort');
+        const pageSizeControl = document.getElementById('leaderboard-page-size');
+        const pagination = document.getElementById('leaderboard-pagination');
+        const previousButton = document.getElementById('leaderboard-previous');
+        const nextButton = document.getElementById('leaderboard-next');
+        const pageStatus = document.getElementById('leaderboard-page-status');
         const leaderboardRows = Array.from(
           tbody.querySelectorAll('tr[data-time-taken]'),
         );
         const emptyRowTemplate = document.getElementById('leaderboard-empty-row');
+        const pageStatusTemplate = {{ t("stats.page_status", page="{page}", pages="{pages}", total="{total}")|tojson }};
+        let currentPage = 1;
 
-        function applyFilterAndSort() {
+        function applyFilterSortAndPagination() {
           const q = filter.value.trim().toLowerCase();
           let rows = [...leaderboardRows];
           rows = rows.filter((row) => {
@@ -82,6 +119,10 @@
 
           const key = sort.value;
           rows.sort((a,b) => {
+            const aOutcome = a.dataset.outcome === 'completed' ? 0 : 1;
+            const bOutcome = b.dataset.outcome === 'completed' ? 0 : 1;
+            const outcomeOrder = aOutcome - bOutcome;
+            if (outcomeOrder !== 0) return outcomeOrder;
             const aTimeRem = Number(a.dataset.timeRemaining || 0);
             const bTimeRem = Number(b.dataset.timeRemaining || 0);
             const aTimeTaken = Number(a.dataset.timeTaken || 0);
@@ -103,23 +144,54 @@
           });
 
           if (rows.length === 0) {
+            pagination.hidden = true;
             tbody.replaceChildren(
               emptyRowTemplate.content.firstElementChild.cloneNode(true),
             );
             return;
           }
 
-          const renderedRows = rows.map((row, index) => {
+          const requestedPageSize = pageSizeControl.value;
+          const pageSize = requestedPageSize === 'all'
+            ? rows.length
+            : Number(requestedPageSize);
+          const pageCount = Math.ceil(rows.length / pageSize);
+          currentPage = Math.min(currentPage, pageCount);
+          const firstIndex = (currentPage - 1) * pageSize;
+          const visibleRows = rows.slice(firstIndex, firstIndex + pageSize);
+          const renderedRows = visibleRows.map((row, index) => {
             const clone = row.cloneNode(true);
-            clone.querySelector('td').textContent = index + 1;
+            clone.querySelector('td').textContent = firstIndex + index + 1;
             return clone;
           });
           tbody.replaceChildren(...renderedRows);
+
+          pagination.hidden = pageCount <= 1;
+          previousButton.disabled = currentPage === 1;
+          nextButton.disabled = currentPage === pageCount;
+          pageStatus.textContent = pageStatusTemplate
+            .replace('{page}', currentPage)
+            .replace('{pages}', pageCount)
+            .replace('{total}', rows.length);
         }
 
-        filter.addEventListener('input', applyFilterAndSort);
-        sort.addEventListener('change', applyFilterAndSort);
-        applyFilterAndSort();
+        function resetAndApply() {
+          currentPage = 1;
+          applyFilterSortAndPagination();
+        }
+
+        filter.addEventListener('input', resetAndApply);
+        sort.addEventListener('change', resetAndApply);
+        pageSizeControl.addEventListener('change', resetAndApply);
+        previousButton.addEventListener('click', () => {
+          currentPage -= 1;
+          applyFilterSortAndPagination();
+        });
+        nextButton.addEventListener('click', () => {
+          currentPage += 1;
+          applyFilterSortAndPagination();
+        });
+        applyFilterSortAndPagination();
       })();
       </script>
 

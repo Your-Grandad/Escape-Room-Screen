@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("users.title") }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='2') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='6') }}">
   </head>
   <body class="admin-page">
     <main class="panel">
@@ -43,7 +43,10 @@
             {% if not user.is_superuser %}
               <form action="{{ url_for('delete_user', user_id=user.id) }}" method="post">
                 <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
-                <button type="submit">{{ t("users.delete") }}</button>
+                <button class="icon-button danger" type="submit" aria-label="{{ t("users.delete") }}" title="{{ t("users.delete") }}">
+                  {% include "includes/icons/trash.html" %}
+                  <span class="sr-only">{{ t("users.delete") }}</span>
+                </button>
               </form>
             {% endif %}
           </article>

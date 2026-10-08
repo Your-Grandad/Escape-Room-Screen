@@ -32,6 +32,7 @@ from .uploads import (
     delete_uploaded_files,
     save_background_image,
     save_hint_media,
+    save_logo_image,
     save_sound,
 )
 
@@ -108,11 +109,16 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                 display_power_on = display_power.is_on()
             except (RuntimeError, OSError, subprocess.CalledProcessError):
                 app.logger.exception("Failed to read Raspberry Pi display power")
+        hint_presets = store.get_hint_presets()
         return render_template(
             "admin.html",
             settings=store.get(),
             hints=store.get_hints(),
-            hint_presets=store.get_hint_presets(),
+            hint_presets=hint_presets,
+            hint_categories=sorted(
+                {preset.category for preset in hint_presets if preset.category},
+                key=str.casefold,
+            ),
             gpio_outputs=gpio.output_names(),
             gpio_output_actions=store.get_gpio_output_actions(),
             gpio_available=gpio.available,
@@ -169,6 +175,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         context: dict[str, Any] = {
             "settings": store.get(),
             "statistics": store.get_statistics(),
+            "completion_statistics": store.get_completion_statistics(),
             "leaderboard": store.get_leaderboard(),
             "csrf_token": csrf_token(),
         }
@@ -277,29 +284,66 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         require_admin()
         if request.method == "POST":
             require_csrf()
+            uploaded_image = None
+            uploaded_logo = None
             try:
+                old_settings = store.get()
                 uploaded_image = save_background_image(
                     request.files.get("background_image"),
                     upload_folder,
                 )
-                settings = store.update(
-                    {
-                        name: request.form.get(name, "")
-                        for name in (
-                            "title",
-                            "message",
-                            "background_colour",
-                            "accent_colour",
-                        )
-                    },
-                    background_image=uploaded_image,
-                    remove_background_image=request.form.get(
-                        "remove_background_image"
+                uploaded_logo = save_logo_image(
+                    request.files.get("logo_image"),
+                    upload_folder,
+                )
+                remove_background = (
+                    request.form.get("remove_background_image") == "on"
+                    and uploaded_image is None
+                )
+                remove_logo = (
+                    request.form.get("remove_logo_image") == "on"
+                    and uploaded_logo is None
+                )
+                display_values = {
+                    name: request.form.get(name, "")
+                    for name in (
+                        "title",
+                        "message",
+                        "background_colour",
+                        "accent_colour",
                     )
-                    == "on",
+                }
+                for name in ("completion_message", "failure_message"):
+                    if name in request.form:
+                        display_values[name] = request.form[name]
+                settings = store.update(
+                    display_values,
+                    background_image=uploaded_image,
+                    remove_background_image=remove_background,
+                    logo_image=uploaded_logo,
+                    remove_logo_image=remove_logo,
                 )
             except ValueError as error:
+                try:
+                    delete_uploaded_files(
+                        upload_folder,
+                        [uploaded_image, uploaded_logo],
+                    )
+                except OSError:
+                    app.logger.exception("Failed to clean up display image upload")
                 return render_settings_page(str(error)), 400
+            replaced_files = []
+            if (
+                old_settings.background_image
+                and (uploaded_image is not None or remove_background)
+            ):
+                replaced_files.append(old_settings.background_image)
+            if old_settings.logo_image and (uploaded_logo is not None or remove_logo):
+                replaced_files.append(old_settings.logo_image)
+            try:
+                delete_uploaded_files(upload_folder, replaced_files)
+            except OSError:
+                app.logger.exception("Failed to delete replaced display image")
             runtime.publish(settings)
             return redirect(url_for("settings"))
         return render_settings_page()
@@ -418,7 +462,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         kind = values.get("kind", "text")
         try:
             media_filename = None
-            if kind in ("image", "video"):
+            if kind in ("image", "video", "audio"):
                 media_filename = save_hint_media(
                     request.files.get("media"),
                     kind,
@@ -430,6 +474,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                 values.get("message"),
                 media_filename,
                 values.get("full_screen"),
+                values.get("category", ""),
             )
         except ValueError as error:
             if request.form:
@@ -459,6 +504,21 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         if request.form:
             return redirect(url_for("hint_library"))
         return jsonify(deleted=deleted)
+
+    @app.post("/admin/hints/<int:preset_id>/category")
+    def update_hint_preset_category(preset_id: int) -> str | Response:
+        require_admin()
+        require_csrf()
+        try:
+            updated = store.update_hint_preset_category(
+                preset_id,
+                request.form.get("category", ""),
+            )
+        except ValueError as error:
+            return render_hint_library(str(error)), 400
+        if not updated:
+            abort(404)
+        return redirect(url_for("hint_library"))
 
     @app.post("/admin/hints/<int:preset_id>/send")
     def send_hint_preset(preset_id: int) -> Response:
@@ -672,10 +732,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         except ValueError as error:
             return jsonify(error=str(error)), 400
         runtime.publish(settings)
-        if action in ("start", "pause") and settings.timer_paused_at is None:
-            runtime.schedule_automatic_hint(settings)
-        else:
-            runtime.cancel_automatic_hint()
+        runtime.schedule_timer_events(settings)
         if request.form:
             return redirect(url_for("admin"))
         return jsonify(settings.to_dict())
@@ -705,6 +762,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         )
         runtime.record_action("timer_adjust", description)
         runtime.publish(settings)
+        runtime.schedule_timer_events(settings)
         if request.form:
             return redirect(url_for("admin"))
         return jsonify(settings.to_dict())
@@ -719,7 +777,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             return jsonify(error=str(error)), 409
         runtime.record_action("room", "Completed room")
         runtime.publish(settings)
-        runtime.cancel_automatic_hint()
+        runtime.cancel_timer_events()
         if request.form:
             return redirect(url_for("admin"))
         return jsonify(settings.to_dict())
@@ -734,7 +792,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             return jsonify(error=str(error)), 409
         runtime.record_action("room", "Failed room")
         runtime.publish(settings)
-        runtime.cancel_automatic_hint()
+        runtime.cancel_timer_events()
         if request.form:
             return redirect(url_for("admin"))
         return jsonify(settings.to_dict())

@@ -147,6 +147,7 @@ window.HomeAudio = (() => {
     }
 
     return {
+      canPlaySounds: allowSound,
       playFailed,
       playHint,
       playSuccess,

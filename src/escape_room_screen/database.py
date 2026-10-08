@@ -47,6 +47,7 @@ def initialize(database_path: Path | str) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timer_started_at TEXT NOT NULL UNIQUE,
                 completed_at TEXT NOT NULL,
+                outcome TEXT NOT NULL DEFAULT 'completed',
                 group_name TEXT NOT NULL,
                 group_size INTEGER NOT NULL,
                 hints_used INTEGER NOT NULL,
@@ -99,7 +100,7 @@ def initialize(database_path: Path | str) -> None:
 
             CREATE TABLE IF NOT EXISTS hint_presets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                kind TEXT NOT NULL CHECK (kind IN ('text', 'image', 'video')),
+                kind TEXT NOT NULL CHECK (kind IN ('text', 'image', 'video', 'audio')),
                 title TEXT NOT NULL,
                 message TEXT,
                 media_filename TEXT,
@@ -189,6 +190,9 @@ def initialize(database_path: Path | str) -> None:
             "announcement TEXT",
             "announcement_expires_at TEXT",
             "background_image TEXT",
+            "logo_image TEXT",
+            "completion_message TEXT NOT NULL DEFAULT 'Congratulations!'",
+            "failure_message TEXT NOT NULL DEFAULT 'Room failed'",
             "timer_remaining_seconds INTEGER",
             "auto_hint_remaining_minutes INTEGER",
             "auto_hint_message TEXT",
@@ -224,6 +228,58 @@ def initialize(database_path: Path | str) -> None:
         if "full_screen" not in preset_columns:
             connection.execute(
                 "ALTER TABLE hint_presets ADD COLUMN full_screen INTEGER NOT NULL DEFAULT 0"
+            )
+        if "category" not in preset_columns:
+            connection.execute(
+                "ALTER TABLE hint_presets ADD COLUMN category TEXT NOT NULL DEFAULT ''"
+            )
+        preset_table = connection.execute(
+            """
+            SELECT sql
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'hint_presets'
+            """
+        ).fetchone()
+        if preset_table is not None and "'audio'" not in preset_table["sql"]:
+            connection.execute(
+                "ALTER TABLE hint_presets RENAME TO hint_presets_without_audio"
+            )
+            connection.execute(
+                """
+                CREATE TABLE hint_presets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL
+                        CHECK (kind IN ('text', 'image', 'video', 'audio')),
+                    title TEXT NOT NULL,
+                    message TEXT,
+                    media_filename TEXT,
+                    full_screen INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    category TEXT NOT NULL DEFAULT ''
+                )
+                """
+            )
+            connection.execute(
+                """
+                INSERT INTO hint_presets (
+                    id, kind, title, message, media_filename, full_screen,
+                    created_at, category
+                )
+                SELECT
+                    id, kind, title, message, media_filename, full_screen,
+                    created_at, category
+                FROM hint_presets_without_audio
+                """
+            )
+            connection.execute("DROP TABLE hint_presets_without_audio")
+        result_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(room_results)")
+        }
+        if "outcome" not in result_columns:
+            connection.execute(
+                "ALTER TABLE room_results "
+                "ADD COLUMN outcome TEXT NOT NULL DEFAULT 'completed'"
             )
         connection.commit()
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("settings.title") }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='2') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='6') }}">
   </head>
   <body class="admin-page">
     <main class="panel">
@@ -17,6 +17,8 @@
         <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
         <label>{{ t("settings.heading") }} <input name="title" maxlength="80" value="{{ settings.title }}" required></label>
         <label>{{ t("settings.description") }} <textarea name="message" maxlength="500">{{ settings.message }}</textarea></label>
+        <label>{{ t("settings.completion_message") }} <textarea name="completion_message" maxlength="200" required>{{ settings.completion_message }}</textarea></label>
+        <label>{{ t("settings.failure_message") }} <textarea name="failure_message" maxlength="200" required>{{ settings.failure_message }}</textarea></label>
         <fieldset class="colour-control">
           <legend>{{ t("settings.background_colour") }}</legend>
           <input id="background-picker" type="color" value="{{ settings.background_colour }}">
@@ -36,7 +38,20 @@
         <label>{{ t("settings.background_image") }} <input name="background_image" accept=".gif,.jpeg,.jpg,.png,.webp,image/gif,image/jpeg,image/png,image/webp" type="file"></label>
         {% if settings.background_image %}
           <p>{{ t("settings.current_image") }} <a href="{{ url_for('uploaded_file', filename=settings.background_image) }}" target="_blank">{{ settings.background_image }}</a></p>
-          <label><input name="remove_background_image" type="checkbox"> {{ t("settings.remove_background") }}</label>
+          <label class="icon-toggle danger" title="{{ t("settings.remove_background") }}">
+            <input class="visually-hidden-control" name="remove_background_image" type="checkbox">
+            {% include "includes/icons/trash.html" %}
+            <span class="sr-only">{{ t("settings.remove_background") }}</span>
+          </label>
+        {% endif %}
+        <label>{{ t("settings.logo_image") }} <input name="logo_image" accept=".gif,.jpeg,.jpg,.png,.webp,image/gif,image/jpeg,image/png,image/webp" type="file"></label>
+        {% if settings.logo_image %}
+          <p>{{ t("settings.current_logo") }} <a href="{{ url_for('uploaded_file', filename=settings.logo_image) }}" target="_blank">{{ settings.logo_image }}</a></p>
+          <label class="icon-toggle danger" title="{{ t("settings.remove_logo") }}">
+            <input class="visually-hidden-control" name="remove_logo_image" type="checkbox">
+            {% include "includes/icons/trash.html" %}
+            <span class="sr-only">{{ t("settings.remove_logo") }}</span>
+          </label>
         {% endif %}
         <button type="submit">{{ t("settings.save") }}</button>
       </form>

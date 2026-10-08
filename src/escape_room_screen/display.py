@@ -11,6 +11,7 @@ from .database import connect
 COLOUR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 MAX_TITLE_LENGTH = 80
 MAX_MESSAGE_LENGTH = 500
+MAX_END_MESSAGE_LENGTH = 200
 TIMER_DURATION_SECONDS = 60 * 60
 ANNOUNCEMENT_DURATION = timedelta(minutes=2)
 
@@ -28,6 +29,9 @@ class DisplaySettings:
     announcement: str | None = None
     announcement_expires_at: str | None = None
     background_image: str | None = None
+    logo_image: str | None = None
+    completion_message: str = "Congratulations!"
+    failure_message: str = "Room failed"
     auto_hint_remaining_minutes: int | None = None
     auto_hint_message: str | None = None
     extra_time_seconds: int = 0
@@ -65,6 +69,7 @@ class HintPreset:
     media_filename: str | None
     created_at: str
     full_screen: bool = False
+    category: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -79,6 +84,23 @@ class RoomStatistic:
 
 
 @dataclass(frozen=True)
+class CompletionStatistics:
+    period: str
+    completed: int
+    failed: int
+
+    @property
+    def total(self) -> int:
+        return self.completed + self.failed
+
+    @property
+    def completion_rate(self) -> float:
+        if self.total == 0:
+            return 0.0
+        return round((self.completed / self.total) * 100, 1)
+
+
+@dataclass(frozen=True)
 class CompletionResult:
     group_name: str
     group_size: int
@@ -86,6 +108,7 @@ class CompletionResult:
     penalties: int
     time_taken_seconds: int
     time_remaining_seconds: int
+    outcome: str
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -133,7 +156,8 @@ class DisplaySettingsStore:
                     timer_paused_at,
                     room_completed_at,
                     room_failed_at,
-                    announcement, announcement_expires_at, background_image,
+                    announcement, announcement_expires_at, background_image, logo_image,
+                    completion_message, failure_message,
                     auto_hint_remaining_minutes, auto_hint_message,
                     extra_time_seconds, penalty_time_seconds,
                     announcement_media_type, announcement_media_filename,
@@ -190,36 +214,46 @@ class DisplaySettingsStore:
         values: dict[str, object],
         background_image: str | None = None,
         remove_background_image: bool = False,
+        logo_image: str | None = None,
+        remove_logo_image: bool = False,
     ) -> DisplaySettings:
-        settings = self._validate(values)
+        current = self.get()
+        settings = self._validate(values, current)
+        updated_background_image = (
+            None
+            if remove_background_image
+            else background_image
+            if background_image is not None
+            else current.background_image
+        )
+        updated_logo_image = (
+            None
+            if remove_logo_image
+            else logo_image
+            if logo_image is not None
+            else current.logo_image
+        )
         with closing(connect(self.database_path)) as connection:
-            if background_image is not None or remove_background_image:
-                connection.execute(
-                    """
-                    UPDATE display_settings
-                    SET title = ?, message = ?, background_colour = ?, accent_colour = ?,
-                        background_image = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = 1
-                    """,
-                    (
-                        settings.title, settings.message, settings.background_colour,
-                        settings.accent_colour,
-                        None if remove_background_image else background_image,
-                    ),
-                )
-            else:
-                connection.execute(
-                    """
-                    UPDATE display_settings
-                    SET title = ?, message = ?, background_colour = ?, accent_colour = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = 1
-                    """,
-                    (
-                        settings.title, settings.message, settings.background_colour,
-                        settings.accent_colour,
-                    ),
-                )
+            connection.execute(
+                """
+                UPDATE display_settings
+                SET title = ?, message = ?, background_colour = ?, accent_colour = ?,
+                    background_image = ?, logo_image = ?,
+                    completion_message = ?, failure_message = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+                """,
+                (
+                    settings.title,
+                    settings.message,
+                    settings.background_colour,
+                    settings.accent_colour,
+                    updated_background_image,
+                    updated_logo_image,
+                    settings.completion_message,
+                    settings.failure_message,
+                ),
+            )
             connection.commit()
         return self.get()
 
@@ -285,11 +319,33 @@ class DisplaySettingsStore:
             connection.commit()
         return self.get()
 
+    def fail_room_if_active(
+        self,
+        timer_started_at: str,
+        failed_at: str,
+    ) -> DisplaySettings | None:
+        with closing(connect(self.database_path)) as connection:
+            result = connection.execute(
+                """
+                UPDATE display_settings
+                SET timer_paused_at = NULL, room_completed_at = NULL,
+                    room_failed_at = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1
+                  AND timer_started_at = ?
+                  AND timer_paused_at IS NULL
+                  AND room_completed_at IS NULL
+                  AND room_failed_at IS NULL
+                """,
+                (failed_at, timer_started_at),
+            )
+            connection.commit()
+        return self.get() if result.rowcount == 1 else None
+
     def toggle_timer_paused(self) -> DisplaySettings:
         settings = self.get()
         if settings.timer_started_at is None:
             raise ValueError("Start the timer before pausing it.")
-        if settings.room_completed_at is not None:
+        if settings.room_completed_at is not None or settings.room_failed_at is not None:
             raise ValueError("Reset the timer before pausing it.")
 
         with closing(connect(self.database_path)) as connection:
@@ -361,8 +417,8 @@ class DisplaySettingsStore:
         media_filename: str | None = None,
         media_full_screen: bool = False,
     ) -> tuple[DisplaySettings, Hint]:
-        if media_type is not None and media_type not in ("image", "video"):
-            raise ValueError("media_type must be 'image' or 'video'.")
+        if media_type is not None and media_type not in ("image", "video", "audio"):
+            raise ValueError("media_type must be 'image', 'video', or 'audio'.")
         if media_type is not None and not media_filename:
             raise ValueError("media_filename is required when media_type is set.")
         message_text = message if isinstance(message, str) else ""
@@ -445,6 +501,51 @@ class DisplaySettingsStore:
             )
             return [RoomStatistic(**dict(row)) for row in rows]
 
+    def get_completion_statistics(
+        self,
+        now: datetime | None = None,
+    ) -> list[CompletionStatistics]:
+        current_time = now or datetime.now(timezone.utc)
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=timezone.utc)
+        else:
+            current_time = current_time.astimezone(timezone.utc)
+
+        with closing(connect(self.database_path)) as connection:
+            rows = connection.execute(
+                "SELECT outcome, completed_at FROM room_results"
+            ).fetchall()
+
+        results = [
+            (
+                row["outcome"],
+                self._as_utc_datetime(row["completed_at"]),
+            )
+            for row in rows
+        ]
+        periods = (
+            ("all_time", None),
+            ("last_7_days", timedelta(days=7)),
+            ("last_30_days", timedelta(days=30)),
+            ("last_365_days", timedelta(days=365)),
+        )
+        summaries = []
+        for period, duration in periods:
+            cutoff = current_time - duration if duration is not None else None
+            period_results = [
+                outcome
+                for outcome, completed_at in results
+                if cutoff is None or completed_at >= cutoff
+            ]
+            summaries.append(
+                CompletionStatistics(
+                    period=period,
+                    completed=period_results.count("completed"),
+                    failed=period_results.count("failed"),
+                )
+            )
+        return summaries
+
     @dataclass(frozen=True)
     class LeaderboardEntry:
         group_name: str
@@ -454,6 +555,7 @@ class DisplaySettingsStore:
         time_taken_seconds: int
         time_remaining_seconds: int
         completed_at: str
+        outcome: str
 
         def to_dict(self) -> dict[str, object]:
             return asdict(self)
@@ -461,16 +563,19 @@ class DisplaySettingsStore:
     def get_leaderboard(self) -> list[LeaderboardEntry]:
         """Return leaderboard entries ordered by best performance.
 
-        Ordering: time_remaining_seconds DESC (more time left is better),
-        then penalties ASC, then hints_used ASC, then completed_at ASC.
+        Completed rooms rank before failed rooms. Within each outcome, ordering is
+        time_remaining_seconds DESC (more time left is better), then penalties
+        ASC, hints_used ASC, and completed_at ASC.
         """
         with closing(connect(self.database_path)) as connection:
             rows = connection.execute(
                 """
                 SELECT group_name, group_size, hints_used, penalties,
-                       time_taken_seconds, time_remaining_seconds, completed_at
+                       time_taken_seconds, time_remaining_seconds, completed_at,
+                       outcome
                 FROM room_results
-                ORDER BY time_remaining_seconds DESC,
+                ORDER BY CASE outcome WHEN 'completed' THEN 0 ELSE 1 END,
+                         time_remaining_seconds DESC,
                          penalties ASC,
                          hints_used ASC,
                          completed_at ASC
@@ -491,7 +596,8 @@ class DisplaySettingsStore:
                     hints_used,
                     penalties,
                     time_taken_seconds,
-                    time_remaining_seconds
+                    time_remaining_seconds,
+                    outcome
                 FROM room_results
                 ORDER BY id DESC
                 LIMIT 1
@@ -500,6 +606,13 @@ class DisplaySettingsStore:
             if row is None:
                 return None
             return CompletionResult(**dict(row))
+
+    @staticmethod
+    def _as_utc_datetime(value: str) -> datetime:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
 
     def save_completion_result(
         self,
@@ -513,13 +626,15 @@ class DisplaySettingsStore:
         hints = self._validate_result_count(hints_used, "Hints used")
         penalty_count = self._validate_result_count(penalties, "Penalties")
         settings = self.get()
-        if settings.timer_started_at is None or settings.room_completed_at is None:
-            raise ValueError("Complete the room before recording its result.")
+        ended_at_value = settings.room_completed_at or settings.room_failed_at
+        if settings.timer_started_at is None or ended_at_value is None:
+            raise ValueError("Complete or fail the room before recording its result.")
+        outcome = "completed" if settings.room_completed_at is not None else "failed"
 
         started_at = datetime.fromisoformat(settings.timer_started_at)
-        completed_at = datetime.fromisoformat(settings.room_completed_at)
+        ended_at = datetime.fromisoformat(ended_at_value)
         time_taken_seconds = (
-            max(0, int((completed_at - started_at).total_seconds()))
+            max(0, int((ended_at - started_at).total_seconds()))
             + settings.penalty_time_seconds
         )
         time_remaining_seconds = (
@@ -531,12 +646,13 @@ class DisplaySettingsStore:
             connection.execute(
                 """
                 INSERT INTO room_results (
-                    timer_started_at, completed_at, group_name, group_size, hints_used,
-                    penalties, time_taken_seconds, time_remaining_seconds
+                    timer_started_at, completed_at, outcome, group_name, group_size,
+                    hints_used, penalties, time_taken_seconds, time_remaining_seconds
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(timer_started_at) DO UPDATE SET
                     completed_at = excluded.completed_at,
+                    outcome = excluded.outcome,
                     group_name = excluded.group_name,
                     group_size = excluded.group_size,
                     hints_used = excluded.hints_used,
@@ -545,8 +661,8 @@ class DisplaySettingsStore:
                     time_remaining_seconds = excluded.time_remaining_seconds
                 """,
                 (
-                    settings.timer_started_at, settings.room_completed_at, name, size, hints,
-                    penalty_count, time_taken_seconds, time_remaining_seconds,
+                    settings.timer_started_at, ended_at_value, outcome, name, size,
+                    hints, penalty_count, time_taken_seconds, time_remaining_seconds,
                 ),
             )
             connection.commit()
@@ -557,6 +673,7 @@ class DisplaySettingsStore:
             penalties=penalty_count,
             time_taken_seconds=time_taken_seconds,
             time_remaining_seconds=time_remaining_seconds,
+            outcome=outcome,
         )
 
     def add_statistic(self, label: object, value: object) -> None:
@@ -589,11 +706,15 @@ class DisplaySettingsStore:
         message: object,
         media_filename: object,
         full_screen: object = False,
+        category: object = "",
     ) -> HintPreset:
-        if kind not in ("text", "image", "video"):
-            raise ValueError("Hint type must be text, image, or video.")
+        if kind not in ("text", "image", "video", "audio"):
+            raise ValueError("Hint type must be text, image, video, or audio.")
         if not isinstance(title, str) or not title.strip() or len(title) > 80:
             raise ValueError("Hint title must contain 1 to 80 characters.")
+        if not isinstance(category, str) or len(category.strip()) > 50:
+            raise ValueError("Hint category can contain at most 50 characters.")
+        category_text = category.strip()
         message_text = message.strip() if isinstance(message, str) else ""
         if kind == "text":
             if not message_text:
@@ -611,15 +732,25 @@ class DisplaySettingsStore:
                     f"Hint caption can contain at most {MAX_MESSAGE_LENGTH} characters."
                 )
         is_full_screen = 1 if (
-            kind != "text" and full_screen in (True, "on", "true", "1", 1)
+            kind in ("image", "video")
+            and full_screen in (True, "on", "true", "1", 1)
         ) else 0
         with closing(connect(self.database_path)) as connection:
             preset_id = connection.execute(
                 """
-                INSERT INTO hint_presets (kind, title, message, media_filename, full_screen)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO hint_presets (
+                    kind, title, message, media_filename, full_screen, category
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (kind, title.strip(), message_text or None, media_filename, is_full_screen),
+                (
+                    kind,
+                    title.strip(),
+                    message_text or None,
+                    media_filename,
+                    is_full_screen,
+                    category_text,
+                ),
             ).lastrowid
             connection.commit()
         return self.get_hint_preset(preset_id)
@@ -627,7 +758,8 @@ class DisplaySettingsStore:
     def get_hint_presets(self) -> list[HintPreset]:
         with closing(connect(self.database_path)) as connection:
             rows = connection.execute(
-                "SELECT id, kind, title, message, media_filename, created_at, full_screen"
+                "SELECT id, kind, title, message, media_filename, created_at,"
+                " full_screen, category"
                 " FROM hint_presets ORDER BY id DESC"
             )
             return [
@@ -640,7 +772,8 @@ class DisplaySettingsStore:
     def get_hint_preset(self, preset_id: int) -> HintPreset | None:
         with closing(connect(self.database_path)) as connection:
             row = connection.execute(
-                "SELECT id, kind, title, message, media_filename, created_at, full_screen"
+                "SELECT id, kind, title, message, media_filename, created_at,"
+                " full_screen, category"
                 " FROM hint_presets WHERE id = ?",
                 (preset_id,),
             ).fetchone()
@@ -651,6 +784,17 @@ class DisplaySettingsStore:
     def delete_hint_preset(self, preset_id: int) -> bool:
         with closing(connect(self.database_path)) as connection:
             result = connection.execute("DELETE FROM hint_presets WHERE id = ?", (preset_id,))
+            connection.commit()
+        return result.rowcount == 1
+
+    def update_hint_preset_category(self, preset_id: int, category: object) -> bool:
+        if not isinstance(category, str) or len(category.strip()) > 50:
+            raise ValueError("Hint category can contain at most 50 characters.")
+        with closing(connect(self.database_path)) as connection:
+            result = connection.execute(
+                "UPDATE hint_presets SET category = ? WHERE id = ?",
+                (category.strip(), preset_id),
+            )
             connection.commit()
         return result.rowcount == 1
 
@@ -1022,29 +1166,58 @@ class DisplaySettingsStore:
         return count
 
     @staticmethod
-    def _validate(values: dict[str, object]) -> DisplaySettings:
+    def _validate(
+        values: dict[str, object],
+        current: DisplaySettings,
+    ) -> DisplaySettings:
         required_fields = {
             "title",
             "message",
             "background_colour",
             "accent_colour",
         }
-        if set(values) != required_fields:
+        optional_fields = {"completion_message", "failure_message"}
+        if not required_fields.issubset(values) or not set(values).issubset(
+            required_fields | optional_fields
+        ):
             raise ValueError("All display settings are required.")
 
         title = values["title"]
         message = values["message"]
         background_colour = values["background_colour"]
         accent_colour = values["accent_colour"]
+        completion_message = values.get(
+            "completion_message",
+            current.completion_message,
+        )
+        failure_message = values.get("failure_message", current.failure_message)
         if not all(
             isinstance(value, str)
-            for value in (title, message, background_colour, accent_colour)
+            for value in (
+                title,
+                message,
+                background_colour,
+                accent_colour,
+                completion_message,
+                failure_message,
+            )
         ):
             raise ValueError("Display settings must be strings.")
         if not title.strip() or len(title) > MAX_TITLE_LENGTH:
             raise ValueError(f"Title must contain 1 to {MAX_TITLE_LENGTH} characters.")
         if len(message) > MAX_MESSAGE_LENGTH:
             raise ValueError(f"Message can contain at most {MAX_MESSAGE_LENGTH} characters.")
+        if (
+            not completion_message.strip()
+            or len(completion_message) > MAX_END_MESSAGE_LENGTH
+        ):
+            raise ValueError(
+                f"Completion message must contain 1 to {MAX_END_MESSAGE_LENGTH} characters."
+            )
+        if not failure_message.strip() or len(failure_message) > MAX_END_MESSAGE_LENGTH:
+            raise ValueError(
+                f"Failure message must contain 1 to {MAX_END_MESSAGE_LENGTH} characters."
+            )
         if not COLOUR_PATTERN.fullmatch(background_colour):
             raise ValueError("Background colour must be a six-digit hex value.")
         if not COLOUR_PATTERN.fullmatch(accent_colour):
@@ -1055,6 +1228,8 @@ class DisplaySettingsStore:
             message=message.strip(),
             background_colour=background_colour.lower(),
             accent_colour=accent_colour.lower(),
+            completion_message=completion_message.strip(),
+            failure_message=failure_message.strip(),
         )
 
     @staticmethod

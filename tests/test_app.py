@@ -11,7 +11,7 @@ from flask import Flask
 from flask.testing import FlaskClient
 
 from escape_room_screen import create_app
-from escape_room_screen.database import connect
+from escape_room_screen.database import connect, initialize
 from escape_room_screen.gpio import GpioController
 
 
@@ -72,6 +72,7 @@ class HomeScreenTests(unittest.TestCase):
         self.client = self.app.test_client()
 
     def tearDown(self) -> None:
+        self.app.extensions["display_runtime"].cancel_timer_events()
         self.app.extensions["gpio"].close()
         self.temporary_directory.cleanup()
 
@@ -134,16 +135,25 @@ class HomeScreenTests(unittest.TestCase):
         self.assertIn(b"Welcome", response.data)
         self.assertIn(b"Home screen", response.data)
         self.assertNotIn(b'class="language-selector"', response.data)
+        settings = self.client.get("/api/display").get_json()
+        self.assertEqual(settings["completion_message"], "Congratulations!")
+        self.assertEqual(settings["failure_message"], "Room failed")
 
     def test_login_can_reveal_the_entered_password(self) -> None:
         response = self.client.get("/admin/login")
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'id="login-password"', response.data)
-        self.assertIn(b'id="show-password" type="checkbox"', response.data)
+        self.assertIn(b'id="show-password" class="icon-button" type="button"', response.data)
+        self.assertIn(b'class="icon icon-eye"', response.data)
+        self.assertIn(b'class="icon icon-eye-off"', response.data)
+        self.assertNotIn(b'id="show-password" type="checkbox"', response.data)
         self.assertIn(b"Show password", response.data)
         script = self.client.get("/static/login.js")
-        self.assertIn(b'showPassword.checked ? "text" : "password"', script.data)
+        self.assertIn(b'passwordInput.type === "password"', script.data)
+        self.assertIn(b'passwordInput.type = revealing ? "text" : "password"', script.data)
+        response.close()
+        script.close()
 
     def test_supported_locale_is_rendered_and_saved_for_the_current_session(self) -> None:
         response = self.client.get("/?locale=es")
@@ -179,12 +189,39 @@ class HomeScreenTests(unittest.TestCase):
         self.assertIn(b">Admin</a>", response.data)
         self.assertIn(b'class="admin-navigation-title">Welcome</h1>', response.data)
         self.assertIn(b'id="active-timer-state"', response.data)
+        self.assertLess(
+            response.data.index(b'class="admin-navigation-timer-actions"'),
+            response.data.index(b'class="admin-navigation-timer"'),
+        )
+        self.assertLess(
+            response.data.index(b'class="admin-navigation-summary"'),
+            response.data.index(b'class="admin-navigation-title"'),
+        )
+        self.assertLess(
+            response.data.index(b'class="admin-navigation-title"'),
+            response.data.index(b'class="admin-navigation-actions"'),
+        )
         self.assertNotIn(b'id="edit-controls"', response.data)
         self.assertNotIn(b'id="add-control"', response.data)
         self.assertIn(b'id="toggle-gpio-pause"', response.data)
         self.assertIn(b"Pause room interaction", response.data)
         self.assertIn(b'id="toggle-timer-pause"', response.data)
         self.assertIn(b"Pause timer", response.data)
+        self.assertIn(
+            b'id="timer-adjust-minutes" type="number" min="0" max="59" step="1"',
+            response.data,
+        )
+        self.assertIn(
+            b'id="timer-adjust-seconds" type="number" min="0" max="59" step="1"',
+            response.data,
+        )
+        self.assertIn(b'id="timer-adjust-fields"', response.data)
+        self.assertIn(b'data-adjust-combined="1"', response.data)
+        self.assertIn(b'data-adjust-combined="-1"', response.data)
+        self.assertIn(b'data-adjust-seconds="60"', response.data)
+        self.assertIn(b'data-adjust-seconds="-60"', response.data)
+        self.assertIn(b"+1 minute", response.data)
+        self.assertNotIn(b'id="timer-adjust-form"', response.data)
 
     def test_all_admin_pages_include_global_navigation(self) -> None:
         self.login()
@@ -196,12 +233,22 @@ class HomeScreenTests(unittest.TestCase):
             "/admin/hints",
             "/admin/sounds",
             "/admin/stats",
+            "/admin/users",
         ):
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200)
                 self.assertIn(b'class="admin-navigation"', response.data)
                 self.assertIn(b"<summary>Settings</summary>", response.data)
+                self.assertIn(b'class="admin-navigation-timer-actions"', response.data)
+                self.assertEqual(response.data.count(b'data-timer-action="start"'), 1)
+                self.assertEqual(response.data.count(b'data-timer-action="reset"'), 1)
+                self.assertIn(b'action="/admin/timer/start"', response.data)
+                self.assertIn(b'action="/admin/timer/reset"', response.data)
+                self.assertIn(b'id="open-preview"', response.data)
+                self.assertIn(b'id="preview-dialog"', response.data)
+                self.assertIn(b'id="close-preview"', response.data)
+                self.assertIn(b'<iframe src="/?preview=1"', response.data)
 
     def test_settings_page_saves_display_content(self) -> None:
         csrf_token = self.login()
@@ -211,6 +258,8 @@ class HomeScreenTests(unittest.TestCase):
                 "csrf_token": csrf_token,
                 "title": "Room One",
                 "message": "Get ready.",
+                "completion_message": "You escaped!",
+                "failure_message": "Better luck next time.",
                 "background_colour": "#012345",
                 "accent_colour": "#abcdef",
             },
@@ -220,6 +269,8 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         display = self.client.get("/api/display").get_json()
         self.assertEqual(display["title"], "Room One")
+        self.assertEqual(display["completion_message"], "You escaped!")
+        self.assertEqual(display["failure_message"], "Better luck next time.")
         self.assertIsNone(display["background_image"])
         admin_page = self.client.get("/admin")
         self.assertIn(b"<title>Room One</title>", admin_page.data)
@@ -227,6 +278,16 @@ class HomeScreenTests(unittest.TestCase):
             b'<h1 class="admin-navigation-title">Room One</h1>',
             admin_page.data,
         )
+        settings_page = self.client.get("/admin/settings")
+        self.assertIn(b'name="completion_message"', settings_page.data)
+        self.assertIn(b"You escaped!", settings_page.data)
+        self.assertIn(b'name="failure_message"', settings_page.data)
+        self.assertIn(b"Better luck next time.", settings_page.data)
+        home_script = self.client.get("/static/home.js")
+        self.assertIn(b"message.textContent = completionMessage", home_script.data)
+        self.assertIn(b"message.textContent = failureMessage", home_script.data)
+        settings_page.close()
+        home_script.close()
 
     def test_logged_out_admin_pages_redirect_to_login(self) -> None:
         for path in ("/admin", "/admin/settings", "/admin/stats"):
@@ -576,6 +637,56 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(uploaded_image.status_code, 200)
         response.close()
         uploaded_image.close()
+
+    def test_settings_page_can_add_and_remove_logo_image(self) -> None:
+        csrf_token = self.login()
+        response = self.client.post(
+            "/admin/settings",
+            data={
+                "csrf_token": csrf_token,
+                "title": "Room One",
+                "message": "Get ready.",
+                "background_colour": "#012345",
+                "accent_colour": "#abcdef",
+                "logo_image": (
+                    BytesIO(b"\x89PNG\r\n\x1a\nlogo-data"),
+                    "logo.png",
+                ),
+            },
+            content_type="multipart/form-data",
+            follow_redirects=False,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        filename = self.client.get("/api/display").get_json()["logo_image"]
+        self.assertRegex(filename, r"^[0-9a-f]{32}\.png$")
+        home_page = self.client.get("/")
+        self.assertIn(b'class="home-screen has-logo"', home_page.data)
+        self.assertIn(b'id="logo" class="home-logo"', home_page.data)
+        self.assertIn(f'src="/uploads/{filename}"'.encode(), home_page.data)
+        settings_page = self.client.get("/admin/settings")
+        self.assertIn(b"Current logo:", settings_page.data)
+        self.assertIn(b'name="remove_logo_image"', settings_page.data)
+
+        remove_response = self.client.post(
+            "/admin/settings",
+            data={
+                "csrf_token": csrf_token,
+                "title": "Room One",
+                "message": "Get ready.",
+                "background_colour": "#012345",
+                "accent_colour": "#abcdef",
+                "remove_logo_image": "on",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(remove_response.status_code, 302)
+        self.assertIsNone(self.client.get("/api/display").get_json()["logo_image"])
+        self.assertEqual(self.client.get(f"/uploads/{filename}").status_code, 404)
+        response.close()
+        home_page.close()
+        settings_page.close()
+        remove_response.close()
 
     def test_sound_settings_accept_valid_sound_upload(self) -> None:
         csrf_token = self.login()
@@ -1181,6 +1292,91 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNotNone(response.get_json()["room_completed_at"])
 
+    def test_admin_can_fail_a_started_room(self) -> None:
+        csrf_token = self.login()
+        self.client.post(
+            "/admin/timer/start",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        response = self.client.post(
+            "/admin/fail",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(response.get_json()["room_failed_at"])
+        self.assertIsNone(response.get_json()["room_completed_at"])
+        display = self.client.get("/api/display").get_json()
+        self.assertEqual(display["room_failed_at"], response.get_json()["room_failed_at"])
+
+    def test_active_room_automatically_fails_when_timer_expires(self) -> None:
+        expired_start = datetime.now(timezone.utc) - timedelta(hours=1, seconds=1)
+        with closing(connect(self.database_path)) as connection:
+            connection.execute(
+                """
+                UPDATE display_settings
+                SET timer_started_at = ?, timer_paused_at = NULL,
+                    room_completed_at = NULL, room_failed_at = NULL
+                WHERE id = 1
+                """,
+                (expired_start.isoformat(),),
+            )
+            connection.commit()
+
+        self.app.extensions["display_runtime"].schedule_timer_events(
+            self.app.extensions["display_store"].get()
+        )
+
+        settings = self.app.extensions["display_store"].get()
+        self.assertIsNotNone(settings.room_failed_at)
+        expected_failure = expired_start + timedelta(hours=1)
+        self.assertEqual(
+            datetime.fromisoformat(settings.room_failed_at),
+            expected_failure,
+        )
+        actions = self.app.extensions["display_store"].get_actions_for_current_run()
+        self.assertEqual(
+            actions[-1]["description"],
+            "Automatically failed room when timer expired",
+        )
+        script = self.client.get("/static/admin.js")
+        self.assertIn(b'new EventSource("/events")', script.data)
+        self.assertIn(
+            b"showRoomResultDialog(settings, settings.room_failed_at)",
+            script.data,
+        )
+        self.assertIn(
+            b"previousSnapshot.timer_started_at === settings.timer_started_at",
+            script.data,
+        )
+        self.assertIn(b"!previousSnapshot.room_failed_at", script.data)
+        self.assertIn(b"shownRoomResultKey === resultKey", script.data)
+        script.close()
+
+    def test_paused_room_does_not_automatically_fail(self) -> None:
+        expired_start = datetime.now(timezone.utc) - timedelta(hours=1, seconds=1)
+        paused_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+        with closing(connect(self.database_path)) as connection:
+            connection.execute(
+                """
+                UPDATE display_settings
+                SET timer_started_at = ?, timer_paused_at = ?,
+                    room_completed_at = NULL, room_failed_at = NULL
+                WHERE id = 1
+                """,
+                (expired_start.isoformat(), paused_at.isoformat()),
+            )
+            connection.commit()
+
+        self.app.extensions["display_runtime"].schedule_timer_events(
+            self.app.extensions["display_store"].get()
+        )
+
+        self.assertIsNone(
+            self.app.extensions["display_store"].get().room_failed_at
+        )
+
     def test_adding_time_increases_total_time_without_changing_time_taken(self) -> None:
         csrf_token = self.login()
         self.client.post(
@@ -1244,8 +1440,90 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(response.get_json()["group_size"], 4)
         self.assertEqual(response.get_json()["hints_used"], 2)
         self.assertEqual(response.get_json()["penalties"], 1)
+        self.assertEqual(response.get_json()["outcome"], "completed")
         self.assertGreaterEqual(response.get_json()["time_taken_seconds"], 0)
         self.assertLessEqual(response.get_json()["time_remaining_seconds"], 3600)
+
+    def test_failed_room_result_is_saved_with_failed_leaderboard_status(self) -> None:
+        csrf_token = self.login()
+        self.client.post(
+            "/admin/timer/start",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.client.post(
+            "/admin/fail",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        response = self.client.post(
+            "/admin/results",
+            json={
+                "group_name": "Locked Out",
+                "group_size": "3",
+                "hints_used": "4",
+                "penalties": "2",
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["outcome"], "failed")
+        self.assertEqual(
+            self.client.get("/api/display").get_json()["latest_result"]["outcome"],
+            "failed",
+        )
+        leaderboard = self.client.get("/admin/stats")
+        self.assertIn(b"Locked Out", leaderboard.data)
+        self.assertIn(b'class="result-failed"', leaderboard.data)
+        self.assertIn(b'class="result-status">Failed</td>', leaderboard.data)
+
+    def test_statistics_page_shows_completion_rates_and_pagination_controls(self) -> None:
+        now = datetime.now(timezone.utc)
+        results = (
+            ("completed", now - timedelta(days=1)),
+            ("failed", now - timedelta(days=10)),
+            ("completed", now - timedelta(days=40)),
+            ("failed", now - timedelta(days=400)),
+        )
+        with closing(connect(self.database_path)) as connection:
+            for index, (outcome, completed_at) in enumerate(results):
+                connection.execute(
+                    """
+                    INSERT INTO room_results (
+                        timer_started_at, completed_at, outcome, group_name,
+                        group_size, hints_used, penalties, time_taken_seconds,
+                        time_remaining_seconds
+                    )
+                    VALUES (?, ?, ?, ?, 4, 0, 0, 1800, 1800)
+                    """,
+                    (
+                        (completed_at - timedelta(hours=1)).isoformat(),
+                        completed_at.isoformat(),
+                        outcome,
+                        f"Team {index}",
+                    ),
+                )
+            connection.commit()
+
+        summaries = {
+            summary.period: summary
+            for summary in self.app.extensions[
+                "display_store"
+            ].get_completion_statistics(now)
+        }
+        self.assertEqual(summaries["all_time"].completion_rate, 50.0)
+        self.assertEqual(summaries["last_7_days"].completion_rate, 100.0)
+        self.assertEqual(summaries["last_30_days"].completion_rate, 50.0)
+        self.assertEqual(summaries["last_365_days"].completion_rate, 66.7)
+
+        self.login()
+        response = self.client.get("/admin/stats")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Completion statistics", response.data)
+        self.assertIn(b"Results per page:", response.data)
+        self.assertIn(b'id="leaderboard-pagination"', response.data)
+        self.assertIn(b'value="10"', response.data)
+        self.assertIn(b'value="all"', response.data)
 
     def test_completed_room_result_reflects_time_adjustments(self) -> None:
         csrf_token = self.login()
@@ -1303,7 +1581,7 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(
             response.get_json()["error"],
-            "Complete the room before recording its result.",
+            "Complete or fail the room before recording its result.",
         )
 
     def test_cannot_complete_room_before_timer_starts(self) -> None:
@@ -1390,15 +1668,38 @@ class HomeScreenTests(unittest.TestCase):
         csrf_token = self.login()
         create_response = self.client.post(
             "/admin/hints",
-            json={"kind": "text", "title": "Look under the desk", "message": "Check the desk drawer."},
+            json={
+                "kind": "text",
+                "title": "Look under the desk",
+                "category": "Study",
+                "message": "Check the desk drawer.",
+            },
             headers={"X-CSRF-Token": csrf_token},
         )
         self.assertEqual(create_response.status_code, 200)
         preset = create_response.get_json()
         self.assertEqual(preset["title"], "Look under the desk")
+        self.assertEqual(preset["category"], "Study")
 
         library_page = self.client.get("/admin/hints")
         self.assertIn(b"Look under the desk", library_page.data)
+        self.assertIn(b'name="category"', library_page.data)
+        self.assertIn(b"Category: Study", library_page.data)
+
+        category_response = self.client.post(
+            f"/admin/hints/{preset['id']}/category",
+            data={"csrf_token": csrf_token, "category": "Library"},
+        )
+        self.assertEqual(category_response.status_code, 302)
+        library_page = self.client.get("/admin/hints")
+        self.assertIn(b"Category: Library", library_page.data)
+
+        admin_page = self.client.get("/admin")
+        self.assertIn(b'id="hint-preset-search"', admin_page.data)
+        self.assertIn(b'id="hint-category-filter"', admin_page.data)
+        self.assertIn(b'value="library">Library</option>', admin_page.data)
+        self.assertIn(b'data-category="library"', admin_page.data)
+        self.assertIn(b"Look under the desk", admin_page.data)
 
         self.client.post("/admin/timer/start", data={"csrf_token": csrf_token})
         send_response = self.client.post(
@@ -1418,6 +1719,27 @@ class HomeScreenTests(unittest.TestCase):
         )
         self.assertEqual(delete_response.status_code, 200)
         self.assertTrue(delete_response.get_json()["deleted"])
+
+    def test_hint_category_validation_and_front_page_search_script(self) -> None:
+        csrf_token = self.login()
+        response = self.client.post(
+            "/admin/hints",
+            json={
+                "kind": "text",
+                "title": "Long category",
+                "category": "x" * 51,
+                "message": "A hint.",
+            },
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("at most 50 characters", response.get_json()["error"])
+
+        script = self.client.get("/static/admin.js")
+        self.assertIn(b"filterHintPresets", script.data)
+        self.assertIn(b"option.dataset.search.includes(query)", script.data)
+        self.assertIn(b"option.dataset.category === category", script.data)
+        script.close()
 
     def test_hint_library_can_create_and_send_image_preset(self) -> None:
         csrf_token = self.login()
@@ -1458,6 +1780,120 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(sent["announcement_media_filename"], preset.media_filename)
         self.assertTrue(sent["announcement_media_full_screen"])
         self.assertEqual(sent["hint"]["media_type"], "image")
+
+    def test_hint_library_can_create_and_send_audio_preset(self) -> None:
+        csrf_token = self.login()
+        create_response = self.client.post(
+            "/admin/hints",
+            data={
+                "csrf_token": csrf_token,
+                "kind": "audio",
+                "title": "Morse code clue",
+                "message": "Listen carefully.",
+                "media": (BytesIO(b"ID3audio-data"), "morse.mp3"),
+                "full_screen": "on",
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(create_response.status_code, 302)
+        create_response.close()
+
+        store = self.app.extensions["display_store"]
+        preset = store.get_hint_presets()[0]
+        self.assertEqual(preset.kind, "audio")
+        self.assertRegex(preset.media_filename, r"^[0-9a-f]{32}\.mp3$")
+        self.assertFalse(preset.full_screen)
+
+        library_page = self.client.get("/admin/hints")
+        self.assertIn(b'<audio class="hint-audio-preview"', library_page.data)
+        self.client.post("/admin/timer/start", data={"csrf_token": csrf_token})
+        send_response = self.client.post(
+            f"/admin/hints/{preset.id}/send",
+            json={},
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(send_response.status_code, 200)
+        sent = send_response.get_json()
+        self.assertEqual(sent["announcement_media_type"], "audio")
+        self.assertEqual(sent["announcement_media_filename"], preset.media_filename)
+        self.assertFalse(sent["announcement_media_full_screen"])
+        self.assertEqual(sent["hint"]["media_type"], "audio")
+
+        home_page = self.client.get("/")
+        self.assertIn(b'id="announcement-audio"', home_page.data)
+        admin_page = self.client.get("/admin")
+        self.assertIn(b'id="current-announcement-audio"', admin_page.data)
+        admin_script = self.client.get("/static/admin-dom.js")
+        self.assertIn(b'hint.media_type === "audio"', admin_script.data)
+        home_script = self.client.get("/static/home.js")
+        self.assertIn(
+            b"announcementAudio.autoplay = soundManager.canPlaySounds",
+            home_script.data,
+        )
+        home_audio_script = self.client.get("/static/home-audio.js")
+        self.assertIn(b"canPlaySounds: allowSound", home_audio_script.data)
+        library_page.close()
+        send_response.close()
+        home_page.close()
+        admin_page.close()
+        admin_script.close()
+        home_script.close()
+        home_audio_script.close()
+
+    def test_hint_library_rejects_unsupported_audio_file(self) -> None:
+        csrf_token = self.login()
+        response = self.client.post(
+            "/admin/hints",
+            data={
+                "csrf_token": csrf_token,
+                "kind": "audio",
+                "title": "Invalid clue",
+                "media": (BytesIO(b"not-audio"), "clue.txt"),
+            },
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"Hint audio must be one of", response.data)
+        response.close()
+
+    def test_hint_preset_migration_preserves_existing_hints_and_allows_audio(
+        self,
+    ) -> None:
+        legacy_database = Path(self.temporary_directory.name) / "legacy-hints.db"
+        with closing(connect(legacy_database)) as connection:
+            connection.executescript(
+                """
+                CREATE TABLE hint_presets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL CHECK (kind IN ('text', 'image', 'video')),
+                    title TEXT NOT NULL,
+                    message TEXT,
+                    media_filename TEXT,
+                    full_screen INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    category TEXT NOT NULL DEFAULT ''
+                );
+                INSERT INTO hint_presets (kind, title, message)
+                VALUES ('text', 'Existing clue', 'Already saved');
+                """
+            )
+            connection.commit()
+
+        initialize(legacy_database)
+        from escape_room_screen.display import DisplaySettingsStore
+
+        store = DisplaySettingsStore(legacy_database)
+        audio = store.add_hint_preset(
+            "audio",
+            "Audio clue",
+            "",
+            "audio.mp3",
+        )
+        self.assertEqual(audio.kind, "audio")
+        self.assertEqual(
+            [preset.title for preset in store.get_hint_presets()],
+            ["Audio clue", "Existing clue"],
+        )
 
     def test_starting_or_resetting_timer_clears_session_hints(self) -> None:
         csrf_token = self.login()

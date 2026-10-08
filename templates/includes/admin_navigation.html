@@ -1,6 +1,26 @@
 <nav class="admin-navigation" aria-label="{{ t("admin.main_navigation") }}">
+  {% if settings is defined %}
+    <div class="admin-navigation-summary">
+      <div class="admin-navigation-timer-actions">
+        <form action="{{ url_for('update_timer', action='start') }}" method="post" class="inline-form">
+          <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+          <button data-timer-action="start" type="submit">{{ t("timer.start") }}</button>
+        </form>
+        <form action="{{ url_for('update_timer', action='reset') }}" method="post" class="inline-form">
+          <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+          <button data-timer-action="reset" type="submit">{{ t("timer.reset") }}</button>
+        </form>
+      </div>
+      <section class="admin-navigation-timer" aria-live="polite" aria-label="{{ t("admin.active_timer") }}">
+        <span class="admin-navigation-timer-label" id="active-timer-state">{{ t("js.timer_not_running") }}</span>
+        <span id="active-timer-elapsed">{{ t("js.elapsed", value="—") }}</span>
+        <span id="active-timer-remaining">{{ t("js.remaining", value="—") }}</span>
+      </section>
+    </div>
+  {% endif %}
+<h1 class="admin-navigation-title">{{ settings.title }}</h1>
+
   <div class="admin-navigation-actions">
-    <h1 class="admin-navigation-title">{{ settings.title }}</h1>
     <a href="{{ url_for('admin') }}">{{ t("nav.admin") }}</a>
     <a href="{{ url_for('statistics') }}">{{ t("nav.leaderboard") }}</a>
     <details class="admin-navigation-menu">
@@ -15,7 +35,6 @@
         {% endif %}
       </div>
     </details>
-    <span>{{ t("admin.signed_in_as", username=session.admin_username) }}</span>
     {% if settings is defined %}
       <button id="open-preview" type="button">{{ t("admin.preview") }}</button>
       <form action="{{ url_for('admin_logout') }}" method="post">
@@ -23,16 +42,5 @@
         <button type="submit">{{ t("admin.sign_out") }}</button>
       </form>
     {% endif %}
-
-    {% if settings is defined %}
-    <div class="admin-navigation-summary">
-      <section class="admin-navigation-timer" aria-live="polite" aria-label="{{ t("admin.active_timer") }}">
-        <span class="admin-navigation-timer-label">{{ t("admin.active_timer") }}</span>
-        <span id="active-timer-state">{{ t("js.timer_not_running") }}</span>
-        <span id="active-timer-elapsed">{{ t("js.elapsed", value="—") }}</span>
-        <span id="active-timer-remaining">{{ t("js.remaining", value="—") }}</span>
-      </section>
-    </div>
-  {% endif %}
   </div>
 </nav>

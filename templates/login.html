@@ -14,7 +14,11 @@
       <form method="post">
         <label>{{ t("login.username") }} <input name="username" autocomplete="username" required autofocus></label>
         <label>{{ t("login.password") }} <input id="login-password" name="password" type="password" autocomplete="current-password" required></label>
-        <label><input id="show-password" type="checkbox"> {{ t("login.show_password") }}</label>
+        <button id="show-password" class="icon-button" type="button" aria-label="{{ t("login.show_password") }}" title="{{ t("login.show_password") }}" aria-pressed="false" data-show-label="{{ t("login.show_password") }}" data-hide-label="{{ t("login.hide_password") }}">
+          {% include "includes/icons/eye.html" %}
+          {% include "includes/icons/eye_off.html" %}
+          <span class="sr-only">{{ t("login.show_password") }}</span>
+        </button>
         <button type="submit">{{ t("login.sign_in") }}</button>
       </form>
       {% include "includes/language_selector.html" %}

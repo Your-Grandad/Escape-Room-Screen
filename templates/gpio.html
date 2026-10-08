@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="{{ current_locale }}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ t("gpio.title") }}</title><link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='4') }}"></head>
+<html lang="{{ current_locale }}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ t("gpio.title") }}</title><link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='6') }}"></head>
 <body class="admin-page"><main class="panel">
   {% include "includes/admin_navigation.html" %}
   <div class="panel-header"><h1>{{ t("gpio.events") }}</h1></div>
@@ -35,7 +35,10 @@
         <span>{{ t("gpio.action_target", label=action.title, output=target, state=t("gpio.signal_" + action.state)) }}</span>
         <form action="{{ url_for('delete_gpio_output_action', action_id=action.id) }}" method="post">
           <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
-          <button type="submit">{{ t("gpio.delete_action") }}</button>
+          <button class="icon-button danger" type="submit" aria-label="{{ t("gpio.delete_action") }}" title="{{ t("gpio.delete_action") }}">
+            {% include "includes/icons/trash.html" %}
+            <span class="sr-only">{{ t("gpio.delete_action") }}</span>
+          </button>
         </form>
       </li>
     {% else %}
@@ -48,7 +51,13 @@
       <li>
         <span class="hint-count">BCM {{ mapping.pin }}</span>
         <span>{{ mapping.event }}{% if mapping.preset_id %}{% set matched = hint_presets | selectattr('id', 'equalto', mapping.preset_id) | list %}{% if matched %} — {{ matched[0].title }}{% endif %}{% endif %}</span>
-        <form action="{{ url_for('delete_gpio_mapping', pin=mapping.pin) }}" method="post"><input name="csrf_token" type="hidden" value="{{ csrf_token }}"><button type="submit">{{ t("gpio.unlink") }}</button></form>
+        <form action="{{ url_for('delete_gpio_mapping', pin=mapping.pin) }}" method="post">
+          <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+          <button class="icon-button danger" type="submit" aria-label="{{ t("gpio.unlink") }}" title="{{ t("gpio.unlink") }}">
+            {% include "includes/icons/trash.html" %}
+            <span class="sr-only">{{ t("gpio.unlink") }}</span>
+          </button>
+        </form>
       </li>
     {% else %}
       <li>{{ t("gpio.none_linked") }}</li>

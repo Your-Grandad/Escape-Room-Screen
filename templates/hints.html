@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("hints.title") }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='7') }}">
   </head>
   <body class="admin-page">
     <main class="panel">
@@ -16,14 +16,16 @@
       <form method="post" action="{{ url_for('create_hint_preset') }}" enctype="multipart/form-data">
         <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
         <label>{{ t("hints.field_title") }} <input name="title" maxlength="80" required></label>
+        <label>{{ t("hints.category") }} <input name="category" maxlength="50" placeholder="{{ t("hints.category_placeholder") }}"></label>
         <fieldset>
           <legend>{{ t("hints.type") }}</legend>
           <label><input type="radio" name="kind" value="text" checked> {{ t("hints.text") }}</label>
           <label><input type="radio" name="kind" value="image"> {{ t("hints.image") }}</label>
           <label><input type="radio" name="kind" value="video"> {{ t("hints.video") }}</label>
+          <label><input type="radio" name="kind" value="audio"> {{ t("hints.audio") }}</label>
         </fieldset>
         <label>{{ t("hints.message") }} <textarea name="message" maxlength="500"></textarea></label>
-        <label>{{ t("hints.file") }} <input name="media" type="file" accept=".gif,.jpeg,.jpg,.png,.webp,.mp4,.webm,.mov"></label>
+        <label>{{ t("hints.file") }} <input name="media" type="file" accept=".gif,.jpeg,.jpg,.png,.webp,.mp4,.webm,.mov,.mp3,.wav,.ogg,.m4a,.aac"></label>
         <label><input type="checkbox" name="full_screen"> {{ t("hints.full_screen") }}</label>
         <button type="submit">{{ t("hints.save") }}</button>
       </form>
@@ -32,6 +34,7 @@
         {% for preset in presets %}
           <li>
             <span class="hint-count">{{ preset.title }} ({{ preset.kind }}{% if preset.full_screen %}, {{ t("hints.full_screen_short") }}{% endif %})</span>
+            <span>{{ t("hints.category_label") }}: {{ preset.category or t("hints.uncategorised") }}</span>
             {% if preset.kind == 'text' %}
               <span>{{ preset.message }}</span>
             {% elif preset.kind == 'image' %}
@@ -40,10 +43,21 @@
             {% elif preset.kind == 'video' %}
               <video class="hint-media-preview" src="{{ url_for('uploaded_file', filename=preset.media_filename) }}" controls></video>
               {% if preset.message %}<span>{{ preset.message }}</span>{% endif %}
+            {% elif preset.kind == 'audio' %}
+              <audio class="hint-audio-preview" src="{{ url_for('uploaded_file', filename=preset.media_filename) }}" controls></audio>
+              {% if preset.message %}<span>{{ preset.message }}</span>{% endif %}
             {% endif %}
+            <form method="post" action="{{ url_for('update_hint_preset_category', preset_id=preset.id) }}" class="inline-form">
+              <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+              <label>{{ t("hints.category") }} <input name="category" maxlength="50" value="{{ preset.category }}"></label>
+              <button type="submit">{{ t("hints.save_category") }}</button>
+            </form>
             <form method="post" action="{{ url_for('delete_hint_preset', preset_id=preset.id) }}" class="inline-form">
               <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
-              <button type="submit">{{ t("hints.delete") }}</button>
+              <button class="icon-button danger" type="submit" aria-label="{{ t("hints.delete") }}" title="{{ t("hints.delete") }}">
+                {% include "includes/icons/trash.html" %}
+                <span class="sr-only">{{ t("hints.delete") }}</span>
+              </button>
             </form>
           </li>
         {% else %}

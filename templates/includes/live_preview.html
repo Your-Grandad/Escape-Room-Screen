@@ -1,0 +1,7 @@
+<dialog id="preview-dialog">
+  <div class="preview-dialog-header">
+    <h2>{{ t("dialog.live_preview") }}</h2>
+    <button id="close-preview" type="button">{{ t("dialog.close") }}</button>
+  </div>
+  <iframe src="{{ url_for('home') }}?preview=1" title="{{ t("dialog.preview_title") }}" aria-hidden="true"></iframe>
+</dialog>

@@ -4,7 +4,11 @@ from threading import Timer
 
 from flask import Flask
 
-from .display import DisplaySettings, DisplaySettingsStore
+from .display import (
+    TIMER_DURATION_SECONDS,
+    DisplaySettings,
+    DisplaySettingsStore,
+)
 from .display_power import DisplayPowerController
 from .events import DisplayUpdateBroker
 from .gpio import GpioController
@@ -27,10 +31,12 @@ class DisplayRuntime:
         self.display_power = display_power
         self._configured_gpio_inputs = configured_gpio_inputs
         self._auto_hint_timer: Timer | None = None
+        self._auto_fail_timer: Timer | None = None
 
     def initialize(self) -> None:
         self._clear_expired_announcement()
         self.configure_gpio_inputs()
+        self.schedule_timer_events(self.store.get())
 
     def publish(self, settings: DisplaySettings) -> None:
         self.broker.publish(settings)
@@ -108,6 +114,7 @@ class DisplayRuntime:
             if (
                 current.timer_started_at == settings.timer_started_at
                 and current.room_completed_at is None
+                and current.room_failed_at is None
             ):
                 updated, _hint = self.store.send_announcement(
                     settings.auto_hint_message
@@ -118,11 +125,71 @@ class DisplayRuntime:
         self._auto_hint_timer.daemon = True
         self._auto_hint_timer.start()
 
+    def schedule_automatic_failure(self, settings: DisplaySettings) -> None:
+        self.cancel_automatic_failure()
+        if (
+            settings.timer_started_at is None
+            or settings.timer_paused_at is not None
+            or settings.room_completed_at is not None
+            or settings.room_failed_at is not None
+        ):
+            return
+        started_at = datetime.fromisoformat(settings.timer_started_at)
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        deadline = started_at.timestamp() + (
+            TIMER_DURATION_SECONDS
+            + settings.extra_time_seconds
+            - settings.penalty_time_seconds
+        )
+        delay = deadline - datetime.now(timezone.utc).timestamp()
+        failed_at = datetime.fromtimestamp(deadline, timezone.utc).isoformat()
+
+        def fail_if_room_is_active() -> None:
+            updated = self.store.fail_room_if_active(
+                settings.timer_started_at,
+                failed_at,
+            )
+            if updated is None:
+                return
+            self.cancel_automatic_hint()
+            self.record_action("room", "Automatically failed room when timer expired")
+            self.publish(updated)
+
+        if delay <= 0:
+            fail_if_room_is_active()
+            return
+        self._auto_fail_timer = Timer(delay, fail_if_room_is_active)
+        self._auto_fail_timer.daemon = True
+        self._auto_fail_timer.start()
+
+    def schedule_timer_events(self, settings: DisplaySettings) -> None:
+        if (
+            settings.timer_started_at is None
+            or settings.timer_paused_at is not None
+            or settings.room_completed_at is not None
+            or settings.room_failed_at is not None
+        ):
+            self.cancel_timer_events()
+            return
+        self.schedule_automatic_hint(settings)
+        self.schedule_automatic_failure(settings)
+
     def cancel_automatic_hint(self) -> None:
         if self._auto_hint_timer is None:
             return
         self._auto_hint_timer.cancel()
         self._auto_hint_timer = None
+
+    def cancel_automatic_failure(self) -> None:
+        if self._auto_fail_timer is None:
+            return
+        self._auto_fail_timer.cancel()
+        self._auto_fail_timer = None
+
+    def cancel_timer_events(self) -> None:
+        self.cancel_automatic_hint()
+        self.cancel_automatic_failure()
 
     def _clear_expired_announcement(self) -> None:
         try:
@@ -165,7 +232,7 @@ class DisplayRuntime:
             return
         self.record_action("timer", "Started 60-minute timer from GPIO")
         self.publish(settings)
-        self.schedule_automatic_hint(settings)
+        self.schedule_timer_events(settings)
         self.store.record_gpio_event(pin, event, accepted=True)
 
     def _send_gpio_preset(self, pin: int, preset_id: int | None) -> None:

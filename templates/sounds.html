@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("sounds.title") }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='2') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='6') }}">
   </head>
   <body class="admin-page">
     <main class="panel">
@@ -24,7 +24,11 @@
           {% if settings.notification_sound_filename %}
             <p>{{ t("sounds.current") }} <a href="{{ url_for('uploaded_file', filename=settings.notification_sound_filename) }}" target="_blank">{{ settings.notification_sound_filename }}</a></p>
             <audio controls src="{{ url_for('uploaded_file', filename=settings.notification_sound_filename) }}"></audio>
-            <label><input name="remove_notification_sound" type="checkbox"> {{ t("sounds.remove") }}</label>
+            <label class="icon-toggle danger" title="{{ t("sounds.remove") }}">
+              <input class="visually-hidden-control" name="remove_notification_sound" type="checkbox">
+              {% include "includes/icons/trash.html" %}
+              <span class="sr-only">{{ t("sounds.remove") }}</span>
+            </label>
           {% endif %}
         </fieldset>
 
@@ -36,7 +40,11 @@
           {% if settings.success_sound_filename %}
             <p>{{ t("sounds.current") }} <a href="{{ url_for('uploaded_file', filename=settings.success_sound_filename) }}" target="_blank">{{ settings.success_sound_filename }}</a></p>
             <audio controls src="{{ url_for('uploaded_file', filename=settings.success_sound_filename) }}"></audio>
-            <label><input name="remove_success_sound" type="checkbox"> {{ t("sounds.remove") }}</label>
+            <label class="icon-toggle danger" title="{{ t("sounds.remove") }}">
+              <input class="visually-hidden-control" name="remove_success_sound" type="checkbox">
+              {% include "includes/icons/trash.html" %}
+              <span class="sr-only">{{ t("sounds.remove") }}</span>
+            </label>
           {% endif %}
         </fieldset>
 
@@ -48,7 +56,11 @@
           {% if settings.failed_sound_filename %}
             <p>{{ t("sounds.current") }} <a href="{{ url_for('uploaded_file', filename=settings.failed_sound_filename) }}" target="_blank">{{ settings.failed_sound_filename }}</a></p>
             <audio controls src="{{ url_for('uploaded_file', filename=settings.failed_sound_filename) }}"></audio>
-            <label><input name="remove_failed_sound" type="checkbox"> {{ t("sounds.remove") }}</label>
+            <label class="icon-toggle danger" title="{{ t("sounds.remove") }}">
+              <input class="visually-hidden-control" name="remove_failed_sound" type="checkbox">
+              {% include "includes/icons/trash.html" %}
+              <span class="sr-only">{{ t("sounds.remove") }}</span>
+            </label>
           {% endif %}
 
         </fieldset>
