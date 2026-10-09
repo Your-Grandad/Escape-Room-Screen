@@ -188,9 +188,10 @@ Use an unused GPIO such as BCM 17 (physical pin 11). Do not use BCM 2 or 3:
 they are I2C pins with board pull-ups and may be claimed by the operating
 system, preventing the application from receiving a button press.
 
-The admin controls include a **Toggle monitor power** button. On Raspberry Pi
-OS, it uses `vcgencmd display_power` to switch the kiosk HDMI output off or on.
-The same operation can be assigned to a physical GPIO button by adding
+The web **Toggle monitor power** button is temporarily hidden. The backend
+and optional GPIO control remain available. On Raspberry Pi OS, monitor
+control uses `vcgencmd display_power` to switch the kiosk HDMI output off or on.
+The operation can be assigned to a physical GPIO button by adding
 `display-toggle` to `GPIO_INPUTS`, for example:
 
 ```bash
@@ -204,8 +205,8 @@ in Admin and **Pause GPIO events** in Settings share one GPIO pause state.
 Neither pauses the countdown nor turns off an active output; use the separate
 timer control for the clock.
 
-The `vcgencmd` command must be available to the account running the app. The
-web button is disabled on hosts where it is not installed.
+The `vcgencmd` command must be available to the account running the app for
+GPIO monitor control to work.
 On current Raspberry Pi OS Trixie and updated Bookworm, install it with
 `sudo apt install -y raspi-utils-core`. The older `libraspberrypi-bin`
 package is unavailable on Trixie.

@@ -456,9 +456,9 @@ from **Settings > Sounds**. Without a custom event file, the app uses a
 built-in tone. The embedded live preview is intentionally silent: use the
 main player display for sound checks.
 
-The admin page's monitor button uses `vcgencmd display_power` and displays
-**Monitor on** or **Monitor off**. Confirm the command is installed and works
-as the kiosk account:
+The web monitor-power button is temporarily hidden. Optional GPIO monitor
+control still uses `vcgencmd display_power`. Before configuring it, confirm
+the command is installed and works as the kiosk account:
 
 ```bash
 command -v vcgencmd

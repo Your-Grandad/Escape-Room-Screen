@@ -245,6 +245,23 @@ class HomeScreenTests(unittest.TestCase):
             self.assertIn(b"Tiempo restante", response.data)
             self.assertIn(b'class="control-state-label">Sin iniciar', response.data)
 
+    def test_dashboard_hides_monitor_power_without_querying_hardware(self) -> None:
+        self.login()
+        controller = self.app.extensions["display_power"]
+        for command in (None, "vcgencmd"):
+            with (
+                self.subTest(command=command),
+                patch.object(controller, "command", command),
+                patch.object(controller, "is_on") as read_power,
+                self.client.get("/admin") as response,
+            ):
+                self.assertEqual(response.status_code, 200)
+                self.assertNotIn(b'id="toggle-display-power"', response.data)
+                self.assertNotIn(b"Toggle monitor power", response.data)
+                self.assertIn(b'id="complete-room"', response.data)
+                self.assertIn(b'id="toggle-timer-pause"', response.data)
+                read_power.assert_not_called()
+
     def test_dashboard_controls_precede_announcements_in_keyboard_order(self) -> None:
         self.login()
         with self.client.get("/admin") as response:

@@ -104,12 +104,6 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
 
     def render_admin_page() -> str:
         gpio_paused, _activity = store.get_gpio_activity()
-        display_power_on = None
-        if display_power.available:
-            try:
-                display_power_on = display_power.is_on()
-            except (RuntimeError, OSError, subprocess.CalledProcessError):
-                app.logger.exception("Failed to read Raspberry Pi display power")
         hint_presets = store.get_hint_presets()
         return render_template(
             "admin.html",
@@ -123,8 +117,6 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             gpio_outputs=gpio.output_names(),
             gpio_output_actions=store.get_gpio_output_actions(),
             gpio_available=gpio.available,
-            display_power_available=display_power.available,
-            display_power_on=display_power_on,
             gpio_paused=gpio_paused,
             csrf_token=csrf_token(),
         )
