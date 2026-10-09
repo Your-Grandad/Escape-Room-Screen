@@ -226,6 +226,7 @@ function themeFixture({ saved = null, systemDark = false, blockedStorage = false
     systemChange(dark) { media.matches = dark; mediaListener(); },
     storageChange(value) { windowEvents.get("storage")({ key: storageKey, newValue: value }); },
     clearStorage() { windowEvents.get("storage")({ key: null, newValue: null }); },
+    restore() { windowEvents.get("pageshow")({ persisted: true }); },
   };
 }
 
@@ -356,6 +357,28 @@ test("theme toggle persists and overrides the device preference after a reload",
   assert.equal(theme.button.attributes["aria-pressed"], "true");
   const reloaded = themeFixture({ saved: theme.storage.get(theme.storageKey) });
   assert.equal(reloaded.root.dataset.adminTheme, "dark");
+});
+
+test("restoring a cached page uses the latest saved theme and updates its toggle", () => {
+  const theme = themeFixture({ saved: "light" });
+  theme.initialize();
+  theme.storage.set(theme.storageKey, "dark");
+  theme.restore();
+  assert.equal(theme.root.dataset.adminTheme, "dark");
+  assert.equal(theme.button.attributes["aria-pressed"], "true");
+  assert.equal(theme.stateLabel.textContent, "On");
+  theme.storage.delete(theme.storageKey);
+  theme.restore();
+  assert.equal(theme.root.dataset.adminTheme, "light");
+});
+
+test("restoring with blocked storage preserves the current in-memory selection", () => {
+  const theme = themeFixture({ blockedStorage: true });
+  theme.initialize();
+  theme.toggle();
+  theme.restore();
+  assert.equal(theme.root.dataset.adminTheme, "dark");
+  assert.equal(theme.button.attributes["aria-pressed"], "true");
 });
 
 test("system changes apply only until a theme is explicitly selected", () => {

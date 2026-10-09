@@ -1,9 +1,19 @@
-# Escape Room Screen Raspberry Pi Kiosk Setup
+# ORBPuzzles Raspberry Pi kiosk setup
 
 This guide documents deployment on Raspberry Pi OS Lite (64-bit), using a
 minimal X11 session instead of a desktop environment. A **Raspberry Pi Zero 2
 W or newer** is required for Chromium kiosk mode.
 
+The production app runs with Gunicorn on **127.0.0.1:8080**. NGINX listens on
+**port 80** and forwards requests to it, so users enter the Pi's IP address
+or hostname without a port. Browsers do not use port 8080 automatically:
+HTTP without a port uses 80, and HTTPS without a port uses 443.
+
+This is a fresh-install recipe. For an existing Pi, back up
+`/home/kiosk/escape-room-screen/src/instance/` and the protected environment
+file first. Do not recreate the kiosk account, clone over an existing checkout
+or regenerate its signing key. Apply the relevant service, cursor and audio
+updates below while preserving your settings, uploads and recorded results.
 
 > [!NOTE]
 > On a Pi Zero 2 W, the Flask application can still take 30-40 seconds to
@@ -55,18 +65,26 @@ sudo apt install -y \
   python3-venv \
   python3-lgpio \
   alsa-utils \
-  libraspberrypi-bin \
+  raspi-utils-core \
   swig \
   liblgpio-dev \
+  nginx \
   chromium \
   xinit \
   xserver-xorg \
-  x11-xserver-utils \
-  unclutter
+  x11-xserver-utils
 ```
 
 `build-essential`, `swig`, and `liblgpio-dev` are required because the
 `lgpio` Python package builds a Raspberry Pi GPIO extension during install.
+
+Current Raspberry Pi OS Trixie and updated Bookworm repositories provide
+`vcgencmd` in `raspi-utils-core`. Older instructions used
+`libraspberrypi-bin`, which has no installation candidate on Trixie.
+If the install stopped with that error, rerun the full install command above
+with `raspi-utils-core`; do not assume the other requested packages were
+installed. Use the native package selected by APT, not an `:armhf` replacement
+on a 64-bit Pi.
 
 ## 3. Create the kiosk account
 
@@ -91,27 +109,39 @@ Install Poetry for the account that runs the service:
 
 ```bash
 sudo -u kiosk -H bash -c '
+  set -e
   cd /home/kiosk
   pipx install poetry
   /home/kiosk/.local/bin/poetry --version
 '
 ```
 
-Install the project's locked dependencies:
+Install the project's dependencies:
 
 ```bash
 sudo -u kiosk -H bash -c '
+  set -e
   cd /home/kiosk/escape-room-screen
   /home/kiosk/.local/bin/poetry env use python3
   /home/kiosk/.local/bin/poetry install --only main
+  /home/kiosk/.local/bin/poetry run gunicorn --version
 '
 ```
+
+Do not continue until the last command prints a Gunicorn version. This verifies
+the executable in the kiosk user's project environment, which is the same
+environment used by systemd. If it reports `Command not found: gunicorn`, use
+the recovery section below; installing it for the administrator or system
+Python does not repair the kiosk environment.
 
 The project supports Python 3.11 or newer. Check the installed interpreter:
 
 ```bash
 python3 --version
 ```
+
+On Linux, the project dependencies include Gunicorn, the production WSGI
+server. Do not use Flask's development server for this always-on deployment.
 
 ## 6. Set application secrets
 
@@ -126,11 +156,17 @@ SECRET_KEY=${SECRET_KEY}
 ADMIN_PASSWORD=replace-this-with-a-long-unique-password
 
 # Optional output pins, using BCM numbering:
-# GPIO_OUTPUTS={"door-light":17,"buzzer":27}
+# GPIO_OUTPUTS={"door-light":27,"buzzer":23}
 
 # Optional GPIO inputs, using BCM numbering:
 # GPIO_INPUTS={"complete-room":17}
-# GPIO_INPUTS={"complete-room":17,"display-toggle":27}
+# GPIO_INPUTS={"complete-room":17,"display-toggle":22}
+
+# Optional: hide the donation widget (shown by default):
+# HIDE_DONATIONS=true
+
+# Optional: maximum upload request size in MB (default 8):
+# MAX_UPLOAD_MB=8
 EOF
 
 sudo chown kiosk:kiosk /etc/escape-room-screen/environment
@@ -142,6 +178,9 @@ Replace `ADMIN_PASSWORD` before starting the service:
 ```bash
 sudo nano /etc/escape-room-screen/environment
 ```
+
+Use only one `GPIO_INPUTS` line, and keep its pins distinct from
+`GPIO_OUTPUTS`. Check that no HAT, overlay or peripheral claims a chosen pin.
 
 ## 7. Create and start the web application service
 
@@ -160,7 +199,7 @@ WorkingDirectory=/home/kiosk/escape-room-screen
 EnvironmentFile=/etc/escape-room-screen/environment
 Environment=HOME=/home/kiosk
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/kiosk/.local/bin/poetry run flask --app escape_room_screen.app:create_app run --host=0.0.0.0 --port=5000
+ExecStart=/home/kiosk/.local/bin/poetry run gunicorn --bind 127.0.0.1:8080 --workers 1 --worker-class gthread --threads 16 --timeout 120 --access-logfile - --error-logfile - "escape_room_screen.app:create_app()"
 Restart=on-failure
 RestartSec=5
 
@@ -169,28 +208,106 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now escape-room-screen.service
+sudo systemctl enable escape-room-screen.service
+sudo systemctl restart escape-room-screen.service
 ```
 
-Wait at least 40 seconds on a Pi Zero 2 W, then test:
+Wait at least 40 seconds on a Pi Zero 2 W, then check the service:
 
 ```bash
-curl -I --max-time 10 http://127.0.0.1:5000/
+sudo systemctl status escape-room-screen.service --no-pager
 ```
 
-The expected response starts with `HTTP/1.1 200 OK`. The display and remote
-administration pages are available at:
+The explicit restart applies a changed service command to an existing
+installation as well as starting a new one. A momentary `active` status can
+still be a restart loop: inspect the journal if the page returns 502.
+
+Configure NGINX in the next step before testing the port-free URL.
+Gunicorn's port 8080 is bound to loopback and is not exposed to other devices.
+
+Keep **one worker** because the live-update broker, timer scheduling, and
+GPIO control are local to one process. The threaded worker allows long-lived
+Server-Sent Events connections alongside normal page requests. Do not add
+`--preload`, which would initialize GPIO and timer state in the master process.
+The 120-second worker timeout leaves room for cold startup on slower Pis.
+The threaded worker continues reporting health during long-lived streams;
+systemd restarts the service if it exits.
+
+## 8. Configure NGINX for access without a port
+
+On a dedicated kiosk Pi, create this site:
+
+```bash
+sudo tee /etc/nginx/sites-available/escape-room-screen >/dev/null <<'EOF'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    client_max_body_size 8m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+    }
+}
+EOF
+
+sudo ln -sfn /etc/nginx/sites-available/escape-room-screen \
+  /etc/nginx/sites-enabled/escape-room-screen
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t && sudo systemctl enable --now nginx && sudo systemctl reload nginx
+```
+
+This replaces NGINX's packaged default site on a dedicated Pi. If the Pi
+already hosts other websites, keep their configuration and use an appropriate
+`server_name` instead of adding another `default_server`.
+
+Disabling proxy buffering and caching lets `/events` deliver live updates
+immediately. The upload limit matches the app's default 8 MB request limit.
+If you change `MAX_UPLOAD_MB`, change `client_max_body_size` to match and
+validate/reload NGINX.
+
+Once NGINX is configured, test the public entry point without a port and
+find the Pi's network address:
+
+```bash
+curl -I --max-time 10 http://127.0.0.1/
+hostname -I
+```
+
+The expected response starts with `HTTP/1.1 200 OK`. The port-8080 check in
+troubleshooting is only for diagnosing the internal backend, not the public URL.
+
+The display and remote administration pages are now available at:
 
 ```text
-http://<pi-ip-address>:5000/
-http://<pi-ip-address>:5000/admin
+http://<pi-ip-address>/
+http://<pi-ip-address>/admin
 ```
+
+You can use `http://<pi-hostname>.local/` if the network resolves that hostname,
+or point a local DNS name at the Pi's IP address. Do not open port 8080 in a
+firewall or router; only the NGINX entry point needs network access. If a
+firewall is enabled on the Pi, allow HTTP port 80 from the trusted local
+network.
+
+These examples use HTTP on a trusted local network. Do not expose the admin
+panel directly to the internet or untrusted Wi-Fi with plaintext HTTP.
+Use a VPN, or configure HTTPS on NGINX's port 443 and secure session cookies,
+for access beyond that trusted network.
 
 Sign in with username `admin` and the `ADMIN_PASSWORD` configured in step 6.
 The `admin` account is the superuser and can add standard operator accounts
 under **Settings > Users**.
 
-## 8. Configure Chromium kiosk mode
+## 9. Configure Chromium kiosk mode
 
 Create the X11 session for the kiosk account:
 
@@ -205,9 +322,7 @@ xset s noblank
 # Select the connected monitor's preferred resolution after X11 is available.
 xrandr --output HDMI-1 --auto
 
-unclutter --timeout 0.5 --start-hidden &
-
-until curl --silent --fail http://127.0.0.1:5000/ >/dev/null; do
+until curl --silent --fail http://127.0.0.1/ >/dev/null; do
   sleep 2
 done
 
@@ -223,7 +338,7 @@ exec /usr/bin/chromium \
   --window-size=1920,1080 \
   --kiosk \
   --incognito \
-  http://127.0.0.1:5000/
+  http://127.0.0.1/
 EOF
 
 sudo chown kiosk:kiosk /home/kiosk/.xinitrc
@@ -239,7 +354,7 @@ sudo tee /home/kiosk/.bash_profile >/dev/null <<'EOF'
 
 if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
   while true; do
-    startx -- :0 -keeptty -nolisten tcp
+    startx -- :0 -keeptty -nolisten tcp -nocursor
     sleep 2
   done
 fi
@@ -249,7 +364,11 @@ sudo chown kiosk:kiosk /home/kiosk/.bash_profile
 sudo chmod 0644 /home/kiosk/.bash_profile
 ```
 
-## 9. Enable automatic kiosk login
+The X server's `-nocursor` option hides the pointer throughout the kiosk
+session, including when a mouse moves. It does not disable input and does
+not affect staff browsers on other computers. No `unclutter` process is needed.
+
+## 10. Enable automatic kiosk login
 
 ```bash
 sudo mkdir -p /etc/systemd/system/getty@tty1.service.d
@@ -268,60 +387,74 @@ sudo reboot
 After reboot, systemd starts the app, logs in as `kiosk`, starts X11, and
 opens the home screen in Chromium.
 
-## 10. Configure HDMI audio and monitor power
-Reboot after saving the file. Verify that ALSA can see an HDMI device:
+## 11. Configure HDMI audio and monitor power
+
+Verify that ALSA can see an HDMI device:
 
 ```bash
 aplay -l
 aplay -L
-speaker-test -c 2 -t wav
 ```
+
+These examples use `hdmi:CARD=vc4hdmi,DEV=0`. If your device is named
+`vc4hdmi0` instead, use that exact name everywhere: the speaker test,
+Chromium's audio flag, and both card references in `.asoundrc`.
+
 ```bash
-speaker-test -D hdmi:CARD=vc4hdmi0,DEV=0 -c 2 -t wav
+speaker-test -D hdmi:CARD=vc4hdmi,DEV=0 -c 2 -t wav -l 1
+sudo -u kiosk -H speaker-test -D hdmi:CARD=vc4hdmi,DEV=0 -c 2 -t wav -l 1
 ```
+
+The second test verifies the account that runs Chromium. Stop any other
+running `speaker-test` with Ctrl+C before testing the app: it can keep the
+HDMI device busy.
+
+Set the kiosk user's default audio to the same working device:
+
 ```bash
 sudo -u kiosk tee /home/kiosk/.asoundrc >/dev/null <<'EOF'
 pcm.!default {
     type plug
-    slave.pcm "hdmi:CARD=vc4hdmi0,DEV=0"
+    slave.pcm "hdmi:CARD=vc4hdmi,DEV=0"
 }
 
 ctl.!default {
     type hw
-    card vc4hdmi0
+    card vc4hdmi
 }
 EOF
 ```
+
+In `/home/kiosk/.xinitrc`, keep
+`--alsa-output-device=hdmi:CARD=vc4hdmi,DEV=0` and
+`--autoplay-policy=no-user-gesture-required`. After changing the audio flag
+or `.asoundrc`, reboot to restart the kiosk's Chromium/X11 session.
+Restarting only the web application service does not restart Chromium.
+
+If the direct speaker test works, do not change HDMI firmware settings just
+to fix browser playback. If no HDMI device is detected, check the model's
+firmware and display-driver settings:
 
 ```bash
 sudo nano /boot/firmware/config.txt
 ```
 
-On older Raspberry Pi OS releases, edit `/boot/config.txt` instead. Add these
-lines if they are not already present:
+On older Raspberry Pi OS releases, the file is `/boot/config.txt`. The
+following legacy settings are model/driver-dependent; only use them if
+appropriate for your setup, then reboot:
 
 ```ini
 hdmi_force_hotplug=1
 hdmi_drive=2
 ```
 
-
-
-On systems using the Raspberry Pi `vc4` HDMI driver, the HDMI audio device is
-typically exposed as `vc4hdmi0`, device `0`. Test it directly with:
-
-```bash
-speaker-test -D hdmi:CARD=vc4hdmi0,DEV=0 -c 2 -t wav
-```
-
-If that device name is not listed by `aplay -L`, use the exact `CARD=` and
-`DEV=` values shown by the command output instead.
-
 The home screen uses Chromium audio playback for notification, completion,
 and failure sounds. The `--autoplay-policy=no-user-gesture-required` option in
 the X11 startup command allows sounds received through live updates to play
 without a separate click on the kiosk screen. Upload and test the sound files
-from **Admin > Sounds**.
+from **Settings > Sounds**. Without a custom event file, the app uses a
+built-in tone. The embedded live preview is intentionally silent: use the
+main player display for sound checks.
 
 The admin page's monitor button uses `vcgencmd display_power` and displays
 **Monitor on** or **Monitor off**. Confirm the command is installed and works
@@ -336,7 +469,7 @@ If the command is missing:
 
 ```bash
 sudo apt update
-sudo apt install -y libraspberrypi-bin
+sudo apt install -y raspi-utils-core
 sudo systemctl restart escape-room-screen.service
 ```
 
@@ -347,8 +480,10 @@ To connect a physical monitor toggle button, set this in
 GPIO_INPUTS={"display-toggle":17}
 ```
 
-Use an unused BCM pin and connect the button according to the GPIO Zero
-button wiring. Apply the environment change with:
+This is an alternative to a complete-room assignment on BCM 17, not a second
+use of the same input. To keep both events, use the combined BCM 17 / BCM 22
+example from step 6 instead. Use unused pins and GPIO Zero button wiring.
+Apply the environment change with:
 
 ```bash
 sudo systemctl daemon-reload
@@ -360,6 +495,67 @@ monitor's own standby or backlight behavior can vary by model; the control
 switches the Raspberry Pi HDMI signal using `vcgencmd`.
 
 ## Troubleshooting encountered during setup
+
+### NGINX shows `502 Bad Gateway`, or live updates do not arrive
+
+Check the backend service and then the reverse proxy:
+
+```bash
+sudo systemctl status escape-room-screen.service --no-pager
+sudo journalctl -u escape-room-screen.service -n 50 --no-pager
+curl -I --max-time 10 http://127.0.0.1:8080/
+sudo nginx -t
+sudo systemctl status nginx --no-pager
+curl -I --max-time 10 http://127.0.0.1/
+```
+
+Allow time for the app to start on a Pi Zero 2 W. If Gunicorn is missing, use
+the missing-Gunicorn recovery below and verify its version as kiosk.
+If the NGINX welcome page appears, check that
+the new site is enabled and the packaged default site has been removed.
+For delayed updates, keep `proxy_buffering off` and a single threaded
+application worker. After changing the service or NGINX configuration, run:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart escape-room-screen.service
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### `Command not found: gunicorn`, repeated restarts, and a blank kiosk
+
+Gunicorn is missing from the service's Poetry environment. NGINX returns
+`502 Bad Gateway` because no backend starts; the kiosk can stay blank because
+its launcher waits for a successful HTTP response before opening Chromium.
+
+Stop the restart loop and repair the dependency as the kiosk user in the
+application directory. This also handles older checkouts whose dependency
+list does not yet include Gunicorn:
+
+```bash
+sudo systemctl stop escape-room-screen.service
+sudo -u kiosk -H bash -c '
+  set -e
+  cd /home/kiosk/escape-room-screen
+  /home/kiosk/.local/bin/poetry add "gunicorn>=26.2.0,<27.0.0" \
+    --markers "sys_platform != \"win32\""
+  /home/kiosk/.local/bin/poetry run gunicorn --version
+' && sudo systemctl restart escape-room-screen.service
+```
+
+Poetry updates the project's dependency declaration and lock file and installs
+the package in its environment. Keep the failure output if either command
+fails; do not continue with a system-wide `pip install` or change the ports.
+
+Allow cold-start time, then check the public entry point:
+
+```bash
+curl -I --max-time 10 http://127.0.0.1/
+```
+
+The expected response is `HTTP/1.1 200 OK`. The waiting kiosk should then launch
+Chromium. If HTTP works but the screen remains blank, investigate the local
+tty1/X11 startup separately.
 
 ### `poetry: command not found`
 
@@ -395,9 +591,12 @@ Python 3.11 through Python 3.x. Pull the updated project and run:
 
 ```bash
 sudo -u kiosk -H bash -c '
+  set -e
   cd /home/kiosk/escape-room-screen
+  git pull --ff-only
   /home/kiosk/.local/bin/poetry env use python3
   /home/kiosk/.local/bin/poetry install --only main
+  /home/kiosk/.local/bin/poetry run gunicorn --version
 '
 ```
 
@@ -434,11 +633,45 @@ aplay -l
 groups kiosk
 ```
 
-If no HDMI device is listed, confirm `hdmi_force_hotplug=1` and
-`hdmi_drive=2` are present in `/boot/firmware/config.txt` (or
-`/boot/config.txt` on older systems), then reboot. If the device is listed but
+If no HDMI device is listed, follow the model/driver-specific checks in the
+audio section. Do not force legacy firmware settings on an unsupported
+driver. If the device is listed but
 the kiosk is silent, confirm `--autoplay-policy=no-user-gesture-required` is in
 `/home/kiosk/.xinitrc` and restart the X11 session.
+If the speaker test works but the app is silent, test the same device as
+`kiosk`, check that the Chromium flag and `/home/kiosk/.asoundrc` use the
+exact working card name, and stop any speaker-test process. Upload a playable
+file under **Settings > Sounds** if you want a custom event sound, save it
+and trigger the matching event. Without an uploaded event file, the app uses
+a built-in tone. The speaker test does not configure an event sound in the app.
+The embedded live preview is deliberately silent; test the main player
+display, not a URL with `preview=1` or `preview=true`.
+
+Read the startup audio flags as the administrator with `sudo`, since the
+kiosk home directory may not be readable by your SSH account:
+
+```bash
+sudo grep -nE 'alsa-output-device|autoplay' /home/kiosk/.xinitrc
+sudo cat /home/kiosk/.asoundrc
+```
+
+If the audible speaker test confirmed `hdmi:CARD=vc4hdmi,DEV=0` but the
+Chromium flag or `.asoundrc` still names `vc4hdmi0`, use this targeted repair.
+It creates timestamped backups and reboots only after the corrected browser
+flag is found. Do not use this replacement on a Pi whose actual working
+device is `vc4hdmi0`:
+
+```bash
+sudo sed -i".audio-backup-$(date +%Y%m%d-%H%M%S)" \
+  's/vc4hdmi0/vc4hdmi/g' \
+  /home/kiosk/.xinitrc /home/kiosk/.asoundrc &&
+sudo grep -nF -- '--alsa-output-device=hdmi:CARD=vc4hdmi,DEV=0' \
+  /home/kiosk/.xinitrc &&
+sudo reboot
+```
+
+Rebooting disconnects SSH and restarts Chromium with the new audio device.
+Once the player screen returns, send a new hint to test its notification.
 
 ### Monitor power button is disabled
 
@@ -449,7 +682,7 @@ command -v vcgencmd
 sudo -u kiosk vcgencmd display_power
 ```
 
-Install `libraspberrypi-bin` if necessary, then restart
+Install `raspi-utils-core` if necessary, then restart
 `escape-room-screen.service`.
 
 The expected command path is `/usr/bin/startx`. Do not run `startx` through
@@ -464,11 +697,38 @@ in `/home/kiosk/.bash_profile`:
 
 ```bash
 sudo sed -i \
-  's/startx -- :0 vt7 -nolisten tcp/startx -- :0 -keeptty -nolisten tcp/' \
+  's/startx -- :0 vt7 -nolisten tcp/startx -- :0 -keeptty -nolisten tcp -nocursor/' \
   /home/kiosk/.bash_profile
 
 sudo reboot
 ```
+
+### Mouse pointer remains in the middle of the kiosk screen
+
+Add `-nocursor` to the X server arguments in `/home/kiosk/.bash_profile`:
+
+```bash
+sudo nano /home/kiosk/.bash_profile
+```
+
+The startup line inside the existing loop should be:
+
+```bash
+startx -- :0 -keeptty -nolisten tcp -nocursor
+```
+
+Save the file, then reboot the Pi to start a new X11 session. This disconnects
+SSH and briefly interrupts the display:
+
+```bash
+sudo reboot
+```
+
+Older versions of this guide used `unclutter --timeout 0.5 --start-hidden`,
+which are not valid options for Debian's classic `unclutter` package.
+Remove that old startup line from `/home/kiosk/.xinitrc`; the X server now
+handles cursor hiding directly. To show a local pointer for debugging,
+remove `-nocursor` and restart the X11 session.
 
 ### Chromium fills only part of the display
 
@@ -490,7 +750,7 @@ sudo -u kiosk DISPLAY=:0 XAUTHORITY=/home/kiosk/.Xauthority \
   xrandr --output HDMI-1 --mode 1920x1080
 ```
 
-The `xrandr --output HDMI-1 --auto` line in step 8 makes the selected
+The `xrandr --output HDMI-1 --auto` line in step 9 makes the selected
 monitor mode persistent each time the kiosk starts. If the connected output
 has a different name, replace `HDMI-1` in `/home/kiosk/.xinitrc` with the
 name reported by `xrandr`, then reboot:
@@ -500,8 +760,10 @@ sudo nano /home/kiosk/.xinitrc
 sudo reboot
 ```
 
-If `xrandr` offers no correct mode, configure the HDMI mode before X11
-starts. Raspberry Pi OS Bookworm stores this file at
+If `xrandr` offers no correct mode, check your monitor, cable and the Pi's
+display-driver documentation. The following legacy firmware example may
+not apply to modern KMS drivers or every Pi model. If your driver supports
+it, configure the HDMI mode before X11 starts. Current Raspberry Pi OS stores this file at
 `/boot/firmware/config.txt`; older Raspberry Pi OS releases use
 `/boot/config.txt`. Edit the file that exists and add these lines for a
 1080p monitor:
@@ -537,12 +799,14 @@ replacement for this application's JavaScript and Server-Sent Events display.
 ### `No module named 'lgpio'`, `swig: No such file or directory`, or `cannot find -llgpio`
 
 Install all packages from step 2, particularly `swig` and `liblgpio-dev`,
-then reinstall the locked dependencies:
+then reinstall the project's dependencies:
 
 ```bash
 sudo -u kiosk -H bash -c '
+  set -e
   cd /home/kiosk/escape-room-screen
   /home/kiosk/.local/bin/poetry install --only main
+  /home/kiosk/.local/bin/poetry run gunicorn --version
 '
 ```
 
@@ -585,14 +849,23 @@ while resolving pin conflicts.
 # Follow application logs.
 sudo journalctl -u escape-room-screen.service -f
 
-# Restart after configuration or application changes.
+# Restart after backend code or environment changes.
 sudo systemctl restart escape-room-screen.service
 
 # Update from Git, then restart.
 sudo -u kiosk -H bash -c '
+  set -e
   cd /home/kiosk/escape-room-screen
   git pull --ff-only
   /home/kiosk/.local/bin/poetry install --only main
-'
-sudo systemctl restart escape-room-screen.service
+  /home/kiosk/.local/bin/poetry run gunicorn --version
+' && sudo systemctl restart escape-room-screen.service
 ```
+
+Back up `src/instance/` and `/etc/escape-room-screen/environment` before
+updates. Preserve local changes; if `git pull --ff-only` fails, resolve the
+reported conflict rather than overwriting the checkout.
+
+Reload NGINX only after `sudo nginx -t` succeeds. Changes to `.xinitrc`,
+`.bash_profile` or `.asoundrc` need a new Chromium/X11 session, normally
+`sudo reboot`; an application-service restart alone does not apply them.

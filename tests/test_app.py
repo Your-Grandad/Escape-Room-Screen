@@ -8,7 +8,7 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from flask import Flask
+from flask import Flask, Response
 from flask.testing import FlaskClient
 
 from escape_room_screen import create_app
@@ -167,17 +167,36 @@ class HomeScreenTests(unittest.TestCase):
         script.close()
 
     def test_admin_styles_are_loaded_only_on_staff_pages(self) -> None:
-        with self.client.get("/admin/login") as response:
-            self.assertIn(b"/static/admin.css?v=5", response.data)
-            self.assertIn(b"/static/admin-theme.js?v=1", response.data)
-            self.assertIn(b"data-admin-theme-toggle", response.data)
-            self.assertLess(
-                response.data.index(b"/static/admin-theme.js"),
-                response.data.index(b"/static/admin.css"),
+        static_directory = Path(__file__).resolve().parents[1] / "static"
+        script = (static_directory / "admin-theme.js").read_bytes()
+        stylesheet = (static_directory / "admin.css").read_bytes()
+
+        def assert_embedded_assets(response: Response) -> None:
+            self.assertIn(
+                b'<script id="admin-theme-initializer">' + script + b"</script>",
+                response.data,
             )
+            self.assertIn(
+                b'<style id="admin-stylesheet">' + stylesheet + b"</style>",
+                response.data,
+            )
+            self.assertNotIn(b"/static/admin-theme.js", response.data)
+            self.assertNotIn(b"/static/admin.css", response.data)
+            self.assertLess(
+                response.data.index(b'id="admin-theme-initializer"'),
+                response.data.index(b"/static/screen.css?v=7"),
+            )
+            self.assertLess(
+                response.data.index(b'id="admin-stylesheet"'),
+                response.data.index(b"<body"),
+            )
+
+        with self.client.get("/admin/login") as response:
+            assert_embedded_assets(response)
+            self.assertIn(b"data-admin-theme-toggle", response.data)
         with self.client.get("/") as response:
-            self.assertNotIn(b"admin.css", response.data)
-            self.assertNotIn(b"admin-theme.js", response.data)
+            self.assertNotIn(b"admin-stylesheet", response.data)
+            self.assertNotIn(b"admin-theme-initializer", response.data)
             self.assertNotIn(b"data-admin-theme-toggle", response.data)
 
         self.login()
@@ -192,14 +211,16 @@ class HomeScreenTests(unittest.TestCase):
         ):
             with self.subTest(path=path), self.client.get(path) as response:
                 self.assertEqual(response.status_code, 200)
-                self.assertIn(b"/static/admin.css?v=5", response.data)
-                self.assertIn(b"/static/admin-theme.js?v=1", response.data)
-                self.assertEqual(response.data.count(b"data-admin-theme-toggle"), 1)
+                assert_embedded_assets(response)
+                self.assertEqual(
+                    response.data.count(b'type="button" data-admin-theme-toggle'), 1
+                )
                 settings_menu = response.data.split(
                     b'<details class="admin-navigation-menu', 1
                 )[1].split(b"</details>", 1)[0]
                 self.assertIn(b"data-admin-theme-toggle", settings_menu)
-                self.assertEqual(response.data.count(b'aria-current="page"'), 1)
+                body = response.data.split(b"</head>", 1)[1]
+                self.assertEqual(body.count(b'aria-current="page"'), 1)
         with self.client.get("/static/admin.css") as response:
             self.assertEqual(response.status_code, 200)
             self.assertIn(b".admin-page", response.data)
@@ -227,9 +248,10 @@ class HomeScreenTests(unittest.TestCase):
     def test_dashboard_controls_precede_announcements_in_keyboard_order(self) -> None:
         self.login()
         with self.client.get("/admin") as response:
-            room_controls = response.data.index(b'data-control-id="gpio"')
-            adjustments = response.data.index(b'data-control-id="timer"')
-            announcements = response.data.index(b'data-control-id="announcement"')
+            body = response.data.split(b"</head>", 1)[1]
+            room_controls = body.index(b'data-control-id="gpio"')
+            adjustments = body.index(b'data-control-id="timer"')
+            announcements = body.index(b'data-control-id="announcement"')
             self.assertLess(room_controls, adjustments)
             self.assertLess(adjustments, announcements)
 
@@ -391,8 +413,9 @@ class HomeScreenTests(unittest.TestCase):
                 self.assertIn(b'class="admin-navigation"', response.data)
                 self.assertIn(b"<summary>Settings</summary>", response.data)
                 self.assertIn(b'class="admin-navigation-timer-actions"', response.data)
-                self.assertEqual(response.data.count(b'data-timer-action="start"'), 1)
-                self.assertEqual(response.data.count(b'data-timer-action="reset"'), 1)
+                body = response.data.split(b"</head>", 1)[1]
+                self.assertEqual(body.count(b'data-timer-action="start"'), 1)
+                self.assertEqual(body.count(b'data-timer-action="reset"'), 1)
                 self.assertIn(b'action="/admin/timer/start"', response.data)
                 self.assertIn(b'action="/admin/timer/reset"', response.data)
                 self.assertIn(b'id="open-preview"', response.data)

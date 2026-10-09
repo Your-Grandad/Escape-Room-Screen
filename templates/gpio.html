@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="{{ current_locale }}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ t("gpio.title") }}</title><link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='6') }}">{% include "includes/admin_theme_head.html" %}</head>
+<html lang="{{ current_locale }}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{ t("gpio.title") }}</title>{% include "includes/admin_theme_head.html" %}</head>
 <body class="admin-page"><main class="panel">
   {% include "includes/admin_navigation.html" %}
   <div class="panel-header"><h1>{{ t("gpio.events") }}</h1></div>

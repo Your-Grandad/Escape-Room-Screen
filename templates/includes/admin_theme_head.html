@@ -1,2 +1,3 @@
-<script src="{{ url_for('static', filename='admin-theme.js', v='1') }}"></script>
-<link rel="stylesheet" href="{{ url_for('static', filename='admin.css', v='5') }}">
+<script id="admin-theme-initializer">{{ admin_theme_script|safe }}</script>
+<link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='7') }}">
+<style id="admin-stylesheet">{{ admin_stylesheet|safe }}</style>

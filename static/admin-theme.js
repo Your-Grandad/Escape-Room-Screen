@@ -3,16 +3,21 @@
   const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
   let preferredTheme = null;
 
-  try {
-    const savedTheme = localStorage.getItem(storageKey);
-    if (savedTheme === "light" || savedTheme === "dark") {
-      preferredTheme = savedTheme;
-    } else if (savedTheme !== null) {
-      console.warn("Ignoring an invalid saved admin theme:", savedTheme);
+  function readPreferredTheme() {
+    try {
+      const savedTheme = localStorage.getItem(storageKey);
+      if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
+      if (savedTheme !== null) {
+        console.warn("Ignoring an invalid saved admin theme:", savedTheme);
+      }
+      return null;
+    } catch (error) {
+      console.warn("Unable to read the saved admin theme.", error);
+      return preferredTheme;
     }
-  } catch (error) {
-    console.warn("Unable to read the saved admin theme.", error);
   }
+
+  preferredTheme = readPreferredTheme();
 
   function applyTheme(theme) {
     document.documentElement.dataset.adminTheme = theme;
@@ -60,6 +65,12 @@
       return;
     }
     preferredTheme = value;
+    applyTheme(currentTheme());
+  });
+
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) return;
+    preferredTheme = readPreferredTheme();
     applyTheme(currentTheme());
   });
 })();

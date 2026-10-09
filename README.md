@@ -1,4 +1,4 @@
-# Escape Room Screen
+# ORBPuzzles (Escape Room Screen)
 
 Fullscreen, browser-based escape-room display for a Raspberry Pi. The
 connected display shows the room screen at `/`; staff can use `/admin` from
@@ -6,25 +6,31 @@ another device on the same network to control it in real time.
 
 ## Install and run
 
-Clone the repository and install its Poetry environment:
+Requires Python 3.11 or newer, Git and Poetry 2.x. Clone the public repository
+over HTTPS and install its Poetry environment:
 
 ```bash
-git clone git@github.com:Your-Grandad/Escape-Room-Screen.git
+git clone https://github.com/Your-Grandad/Escape-Room-Screen.git
 cd Escape-Room-Screen
 poetry install
 ```
 
 For complete platform-specific instructions, see
-[Running on Windows and Linux](LOCAL_SETUP.md). For a dedicated Raspberry Pi
+[Running on Windows, Linux and macOS](LOCAL_SETUP.md). For a dedicated Raspberry Pi
 kiosk, see [Raspberry Pi deployment](RASPBERRY_PI_KIOSK.md).
 
-Set a unique Flask signing key and the admin password, then start the app:
+For development, set a unique Flask signing key and the admin password, then
+start Flask's development server:
 
 ```bash
-export SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export SECRET_KEY="$(poetry run python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 export ADMIN_PASSWORD="choose-a-strong-password"
-poetry run flask --app escape_room_screen.app:create_app run --host=0.0.0.0
+poetry run flask --app escape_room_screen.app:create_app run --host=0.0.0.0 --port=5000
 ```
+
+These are Unix-shell commands; use the local setup guide's PowerShell section
+on Windows. Reuse a stable signing key on later launches and keep it outside
+Git. Restrict this development server to the trusted local network.
 
 `ADMIN_PASSWORD` supplies the initial password for the `admin` superuser.
 Sign in with username `admin`. The superuser can create standard users under
@@ -34,10 +40,12 @@ but cannot manage accounts. Each user can replace their own password under
 application database, persist across restarts, and password changes sign out
 that user's existing sessions.
 
-Open `http://<pi-address>:5000/` in Chromium's kiosk mode on the Pi. Browse to
-`http://<pi-address>:5000/admin` from an authorised device to log in and alter
-the title, message, and colours. Changes are stored in SQLite and pushed to
-the display through Server-Sent Events without refreshing the page.
+For this local development command, open `http://127.0.0.1:5000/` for the
+display and `http://127.0.0.1:5000/admin` for staff controls. On another device,
+replace `127.0.0.1` with the server computer's trusted local-network IP,
+keeping `:5000`. Do not use this development server for the always-on Pi kiosk.
+The Pi production setup below uses port-free URLs instead. Changes are stored
+in SQLite and pushed through Server-Sent Events without refreshing the page.
 
 Staff pages use a separate `static/admin.css` stylesheet for the navigation,
 utility forms, and responsive layouts. It is not loaded by the room display,
@@ -73,6 +81,68 @@ For this built-in live-update broker, run one application worker. If the
 application later needs multiple workers or multiple Pis, replace the broker
 with a shared service such as Redis pub/sub.
 
+## Production on Raspberry Pi (no port in the URL)
+
+Use Gunicorn on **127.0.0.1:8080** behind NGINX on **port 80**. Browsers use
+port 80 automatically for HTTP, so staff can open `http://<pi-ip-address>/admin`
+and the display can open `http://<pi-ip-address>/` without entering a port.
+Port 8080 alone would still require `:8080` in the browser.
+
+Gunicorn is included in the Poetry dependencies on Unix platforms, not Windows. The
+[Raspberry Pi deployment guide](RASPBERRY_PI_KIOSK.md) includes the production
+systemd service, NGINX configuration, and kiosk startup URLs. Keep a single
+application worker with threaded request handling for live-update streams.
+This HTTP setup is for a trusted local network; use a VPN or configure HTTPS
+before allowing access from an untrusted network.
+
+Before enabling the service, verify `poetry run gunicorn --version` as the
+`kiosk` user inside `/home/kiosk/escape-room-screen`. A missing executable
+causes a restart loop and NGINX 502 responses; the guide includes a Poetry
+repair for older checkouts. The main HTTP check, after configuring NGINX, is
+`curl -I --max-time 10 http://127.0.0.1/`. Port 8080 is only the internal
+backend and its optional diagnostic URL.
+
+The X11 startup line uses `startx -- :0 -keeptty -nolisten tcp -nocursor`.
+This permanently hides the kiosk pointer without a separate `unclutter`
+process; staff browsers on other computers are unaffected.
+
+## Sound and live preview
+
+Use **Settings > Sounds** to save custom notification, completed-room and
+failed-room audio. Without a custom file, the app uses a built-in tone.
+Audio hint presets are separate files in **Settings > Hint library**.
+The embedded **Open live preview** is deliberately silent; test sound on
+the main player display, not a URL with `preview=1` or `preview=true`.
+
+For Pi HDMI audio, find the actual device with `aplay -L` and test it as the
+`kiosk` user. The guide's example is `hdmi:CARD=vc4hdmi,DEV=0`, not a universal
+device name. Use the same working card in Chromium's `--alsa-output-device`
+flag and both `.asoundrc` references (`slave.pcm` and `ctl.!default`).
+Keep `--autoplay-policy=no-user-gesture-required` in the kiosk startup.
+Stop any running speaker test before testing the app.
+
+Changing `.xinitrc`, `.bash_profile` or `.asoundrc` requires restarting the
+Chromium/X11 session, normally with a Pi reboot; restarting only the web
+service does not apply those changes. The deployment guide includes privileged
+file checks, timestamped audio-config backups and an existing-install repair.
+
+## Admin appearance
+
+Choose light or dark mode under **Settings**. The choice is stored in that
+browser's local storage, not in the room database. Until you choose a mode,
+the admin pages follow the device's system preference. Use a persistent
+browser profile if the choice should survive closing Chromium; incognito
+storage is discarded when its last window closes.
+
+Staff pages include their theme initialization and admin stylesheet directly
+in the HTML, before the page content. This avoids separate theme/style
+downloads and keeps the old blue/yellow styling from becoming the fallback
+when those downloads are delayed or fail on a busy Pi. The room display's
+colours and styling are unchanged.
+
+Restart the application after deploying code or changing admin theme assets,
+then reload staff pages; the embedded assets are read once at app startup.
+
 ## Languages
 
 English is the default language. Use the language selector on any rendered
@@ -103,7 +173,7 @@ The optional `GPIO_OUTPUTS` variable maps a friendly output name to a BCM GPIO
 pin number. Each output gains On and Off controls in `/admin`:
 
 ```bash
-export GPIO_OUTPUTS='{"door-light": 17, "buzzer": 27}'
+export GPIO_OUTPUTS='{"door-light": 27, "buzzer": 23}'
 ```
 
 To configure a room-complete input before opening the admin page, set
@@ -124,11 +194,21 @@ The same operation can be assigned to a physical GPIO button by adding
 `display-toggle` to `GPIO_INPUTS`, for example:
 
 ```bash
-export GPIO_INPUTS='{"display-toggle": 17}'
+export GPIO_INPUTS='{"complete-room": 17, "display-toggle": 22}'
 ```
+
+Use this combined input assignment instead of the earlier input example,
+not as a second environment entry. Keep input pins distinct from output pins
+and check overlays before using any example number. **Pause room interaction**
+in Admin and **Pause GPIO events** in Settings share one GPIO pause state.
+Neither pauses the countdown nor turns off an active output; use the separate
+timer control for the clock.
 
 The `vcgencmd` command must be available to the account running the app. The
 web button is disabled on hosts where it is not installed.
+On current Raspberry Pi OS Trixie and updated Bookworm, install it with
+`sudo apt install -y raspi-utils-core`. The older `libraspberrypi-bin`
+package is unavailable on Trixie.
 
 GPIO Zero controls the pins on Raspberry Pi OS. On a development computer,
 the app logs that physical GPIO is unavailable and continues without touching

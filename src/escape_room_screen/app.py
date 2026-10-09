@@ -28,6 +28,15 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         template_folder=str(project_directory / "templates"),
         static_folder=str(project_directory / "static"),
     )
+    # Embed critical staff assets so slow downloads cannot reveal legacy styling.
+    app.jinja_env.globals.update(
+        admin_theme_script=(project_directory / "static" / "admin-theme.js").read_text(
+            encoding="utf-8"
+        ),
+        admin_stylesheet=(project_directory / "static" / "admin.css").read_text(
+            encoding="utf-8"
+        ),
+    )
     max_upload_mb = _load_max_upload_mb()
     app.config.from_mapping(
         SECRET_KEY=os.environ.get("SECRET_KEY"),
