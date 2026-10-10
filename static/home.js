@@ -9,6 +9,8 @@ const announcementVideo = document.querySelector("#announcement-video");
 const announcementAudio = document.querySelector("#announcement-audio");
 const gpioActivity = document.querySelector("#gpio-activity");
 const soundManager = window.HomeAudio.createSoundManager(window.location.search);
+const mediaManager = window.HomeMedia?.createManager(window.location.search);
+announcementVideo.muted = !soundManager.canPlaySounds;
 announcementAudio.autoplay = soundManager.canPlaySounds;
 let timerStartedAt = null;
 let timerDurationSeconds = Number(timer.dataset.durationSeconds);
@@ -38,6 +40,7 @@ const forceDefaultLayout = new URLSearchParams(window.location.search).get("layo
 let warnedAboutMissingLayout = false;
 
 function updateDisplay(settings) {
+  const briefingActive = mediaManager?.update(settings);
   if (window.ScreenLayout) {
     window.ScreenLayout.apply(document.body, settings, { forceDefault: forceDefaultLayout });
   } else if (settings.screen_layout_enabled && !forceDefaultLayout && !warnedAboutMissingLayout) {
@@ -101,11 +104,14 @@ function updateDisplay(settings) {
     settings.announcement_media_filename && ["image", "video"].includes(settings.announcement_media_type),
   ));
   announcement.classList.toggle("full-screen", Boolean(settings.announcement_media_full_screen));
-  updateAnnouncementMedia(settings);
+  updateAnnouncementMedia(briefingActive ? {
+    ...settings, announcement_media_type: null, announcement_media_filename: null,
+  } : settings);
   updateTimer();
   updateRoomCompletion();
   updateRoomFailure(roomFailedAt);
   updateAnnouncement();
+  if (briefingActive) announcement.hidden = true;
 }
 
 function updateAnnouncementMedia(settings) {
@@ -332,6 +338,7 @@ setInterval(() => {
   updateRoomCompletion();
   updateRoomFailure(roomFailedAt);
   updateAnnouncement();
+  mediaManager?.tick();
 }, 250);
 
 let lastDisplaySnapshot = null;

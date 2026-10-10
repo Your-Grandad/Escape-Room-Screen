@@ -368,6 +368,45 @@ The X server's `-nocursor` option hides the pointer throughout the kiosk
 session, including when a mouse moves. It does not disable input and does
 not affect staff browsers on other computers. No `unclutter` process is needed.
 
+### Optional media on a Pi 3 (1 GB RAM)
+
+Version 1.1.0 adds **Settings > Fonts & media** and PDF exports on
+**Leaderboard**. After updating an existing checkout, run
+`poetry install --only main` as the kiosk user, restart the application service,
+and reload the kiosk browser so its new scripts are loaded. This installs
+ReportLab for exports; it does not enable any media automatically.
+
+Start with an image background and add optional media one feature at a time.
+Use short H.264 MP4 videos at 720p/24–30 fps, compressed soundtracks, and fonts
+under 2 MiB. Avoid 4K videos and multiple player tabs. Background video is muted
+and unloaded before a video hint or briefing loads; music pauses for audio/video
+hints and runs only while the timer runs. Hardware decoding and memory headroom
+must still be checked on the actual Pi: desktop browser tests are not a Pi
+performance guarantee.
+
+The kiosk's `--autoplay-policy=no-user-gesture-required` flag above also applies
+to briefings and music. A normal browser may need **Retry playback** first.
+With the briefing option selected, Start plays the video before starting the
+timer. Playback failure does not start it: staff can explicitly skip and start
+or cancel the pending briefing. The staff live preview stays silent and cannot
+complete a briefing.
+
+For a browser-only fallback, change the kiosk URL to
+`http://127.0.0.1/?media=default`, or use
+`http://127.0.0.1/?layout=default&media=default` to also restore default positioning.
+For a server-wide fallback, add `DISABLE_SCREEN_MEDIA=true` to the protected
+service environment file and restart the service; saved media is retained and
+new starts bypass the briefing. An already-pending briefing still needs staff
+to skip or cancel it. Font/video failures retain the system font or image/colour
+background and show a diagnostic message.
+
+The application defaults to an 8 MB **combined upload request** limit.
+To allow larger briefing files, increase `MAX_UPLOAD_MB` in the protected
+environment and match NGINX's `client_max_body_size`; leave room for multipart
+form overhead and upload files separately. Restart the app and reload NGINX
+after validating its configuration with `sudo nginx -t`. Larger upload limits
+do not make high-resolution playback suitable for a low-memory Pi.
+
 ## 10. Enable automatic kiosk login
 
 ```bash

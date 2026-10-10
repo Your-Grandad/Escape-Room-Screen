@@ -208,6 +208,9 @@ def initialize(database_path: Path | str) -> None:
             "failed_sound_filename TEXT",
             "screen_layout TEXT",
             "screen_layout_enabled INTEGER NOT NULL DEFAULT 0",
+            "media_settings TEXT",
+            "briefing_token TEXT",
+            "briefing_filename TEXT",
         ):
             name = column.split()[0]
             if name not in existing_columns:

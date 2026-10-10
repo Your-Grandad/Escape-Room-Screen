@@ -101,11 +101,13 @@ screen. **Use original default screen** disables custom positioning immediately,
 without deleting the saved design or changing the timer, hints, or room settings.
 
 The original layout is the default for existing and new installations. The
-editor uses vanilla JavaScript, no media/image decoders or preview iframe,
+editor's draft uses vanilla JavaScript, no media/image decoders or iframe,
 and animation frames only while editing or resizing the preview. The player
 loads only the small layout renderer/CSS, not the editor, and no extra polling
 loop is added. The 16:9 preview uses placeholders and percentage-based positions;
 check the actual target TV, especially if it has a different aspect ratio.
+**Open live preview** remains available in the editor navigation. It shows the
+saved player screen, not unsaved draft changes, and loads only when opened.
 Use compressed images and Pi-compatible video resolutions; layout fallbacks
 do not fix memory pressure caused by Chromium itself or oversized media.
 
@@ -142,6 +144,57 @@ does not consume another live connection and polling loop on the Pi.
 For this built-in live-update broker, run one application worker. If the
 application later needs multiple workers or multiple Pis, replace the broker
 with a shared service such as Redis pub/sub.
+
+### Fonts, backgrounds, music and briefings
+
+Version **1.1.0** adds **Settings > Fonts & media** (`/admin/media`).
+Upload local WOFF2/WOFF/TTF/OTF fonts (up to 2 MiB), choose message and hint
+text colours, and optionally enable a muted looping video background, a
+looping soundtrack with volume control, or a video briefing. Use only fonts
+and media you have permission to use. Font loading failures retain the system
+font; the screen editor keeps lightweight placeholders rather than decoding
+these files. Check the actual player screen or live preview for final appearance.
+
+Media options are off by default. The soundtrack plays only during a running
+timer; pausing, finishing or expiring the timer stops it. Audio/video hints and
+briefings pause music. Background video is unloaded before a video hint or
+briefing starts, so these features do not require simultaneous video decoders;
+the existing image/colour background remains underneath as a fallback.
+
+With **Play briefing before starting the timer** selected, manual and GPIO
+starts play the briefing first. Only the main player screen's playback-ended
+event starts the timer; the silent staff preview cannot start it. Start stays
+disabled while the briefing is pending. Staff can **Skip briefing and start
+timer** or **Cancel briefing**; reset asks for confirmation before cancelling.
+Media settings cannot change during a pending briefing. Playback errors leave
+the timer stopped and show a retry message. Ordinary browsers may require
+**Retry playback** to allow sound; the kiosk autoplay flag avoids that prompt.
+Briefing completion uses a single-use capability exposed to player screens,
+not server verification of watched duration: keep the app on a trusted LAN.
+
+For media problems, open `/?media=default` to disable these new fonts, colours,
+background video and soundtrack in that browser, or set
+`DISABLE_SCREEN_MEDIA=true` and restart the server for all screens. The server
+override also bypasses briefings on subsequent starts. If a briefing is already
+pending, staff must skip or cancel it; disabling playback does not start a
+timer silently. These fallbacks leave existing hint and event sounds available.
+Combine `/?layout=default&media=default` for the original player presentation.
+
+Uploads are local, not remote streaming URLs. `MAX_UPLOAD_MB` (8 MB by default)
+limits the **combined request**, including form overhead; upload large files
+one at a time and match any reverse proxy's body-size limit. For a Pi 3,
+prefer short H.264 MP4 videos at 720p/24–30 fps, compressed audio and an image
+fallback. Desktop tests do not establish Pi hardware decoding or memory use.
+
+### PDF result reports
+
+Open **Leaderboard** (`/admin/stats`) and choose **Export PDF report**.
+Optional start/end dates filter inclusive **UTC finish dates**, independently
+of the leaderboard's browser-side search/sort. Reports contain completion
+counts/rate and the ranked results, including team size, time taken/remaining,
+hints, penalties and finish timestamps. Empty date ranges still produce a
+report. Exports are limited to 1,000 results; choose a narrower range if needed.
+Reports require staff login and use ReportLab, installed by Poetry.
 
 ## Production on Raspberry Pi (no port in the URL)
 

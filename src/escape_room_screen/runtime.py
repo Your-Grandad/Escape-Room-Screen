@@ -232,13 +232,16 @@ class DisplayRuntime:
         return is_on
 
     def _start_timer_from_gpio(self, pin: int, event: str) -> None:
-        settings = self.store.start_timer_if_not_running()
+        settings = self.store.start_timer_if_not_running(
+            allow_briefing=not self.app.config["DISABLE_SCREEN_MEDIA"],
+        )
         if settings is None:
             self.store.record_gpio_event(pin, event, accepted=False)
             return
         self.record_action(
             "timer",
-            f"Started timer ({timedelta(seconds=settings.timer_base_seconds)}) from GPIO",
+            "Started video briefing from GPIO" if settings.briefing_token
+            else f"Started timer ({timedelta(seconds=settings.timer_base_seconds)}) from GPIO",
         )
         self.publish_current_settings()
         self.schedule_timer_events(settings)

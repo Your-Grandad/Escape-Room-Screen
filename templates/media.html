@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="{{ current_locale }}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ t("media.title") }}</title>
+    {% include "includes/admin_theme_head.html" %}
+  </head>
+  <body class="admin-page">
+    <main class="panel">
+      {% include "includes/admin_navigation.html" %}
+      <h1>{{ t("media.title") }}</h1>
+      <p>{{ t("media.description") }}</p>
+      <p>{{ t("media.upload_limit", limit=config.MAX_UPLOAD_MB) }}</p>
+      {% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+      {% if settings.media_settings_error %}<p class="error">{{ t("media.invalid_settings") }}</p>{% endif %}
+      {% set media = settings.media_settings %}
+      <form method="post" enctype="multipart/form-data">
+        <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+        <fieldset {% if settings.briefing_token %}disabled{% endif %}>
+          <section class="utility-section">
+            <h2>{{ t("media.font_colours") }}</h2>
+            <label>{{ t("media.text_colour") }} <input name="text_colour" type="color" value="{{ media.text_colour }}" required></label>
+            <label>{{ t("media.hint_colour") }} <input name="hint_colour" type="color" value="{{ media.hint_colour }}" required></label>
+          </section>
+          {% for name, label, accept in [
+            ("font_filename", "media.font", ".woff2,.woff,.ttf,.otf"),
+            ("background_video", "media.background", ".mp4,.webm,.mov"),
+            ("soundtrack", "media.soundtrack", ".mp3,.wav,.ogg,.m4a,.aac"),
+            ("briefing_video", "media.briefing", ".mp4,.webm,.mov")
+          ] %}
+            <section class="utility-section">
+              <h2>{{ t(label) }}</h2>
+              <label>{{ t("media.upload") }} <input name="{{ name }}" type="file" accept="{{ accept }}"></label>
+              {% if media[name] %}
+                <p><a href="{{ url_for('uploaded_file', filename=media[name]) }}" target="_blank" rel="noopener">{{ media[name] }}</a></p>
+                <label><input name="remove_{{ name }}" type="checkbox"> {{ t("media.remove") }}</label>
+              {% endif %}
+              {% if name == "background_video" %}
+                <label><input name="background_video_enabled" type="checkbox" {% if media.background_video_enabled %}checked{% endif %}> {{ t("media.enable_background") }}</label>
+              {% elif name == "soundtrack" %}
+                <label><input name="soundtrack_enabled" type="checkbox" {% if media.soundtrack_enabled %}checked{% endif %}> {{ t("media.enable_soundtrack") }}</label>
+                <label>{{ t("media.volume") }} <input name="soundtrack_volume" type="number" min="0" max="100" value="{{ media.soundtrack_volume }}" required></label>
+              {% elif name == "briefing_video" %}
+                <label><input name="briefing_enabled" type="checkbox" {% if media.briefing_enabled %}checked{% endif %}> {{ t("media.enable_briefing") }}</label>
+                <p>{{ t("media.briefing_help") }}</p>
+              {% else %}
+                <p>{{ t("media.font_help") }}</p>
+              {% endif %}
+            </section>
+          {% endfor %}
+          <button type="submit">{{ t("media.save") }}</button>
+        </fieldset>
+      </form>
+      {% include "includes/donate_widget.html" %}
+    </main>
+    {% include "includes/admin_scripts.html" %}
+  </body>
+</html>

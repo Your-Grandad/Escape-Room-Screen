@@ -1,6 +1,7 @@
 import re
 import json
 import logging
+import secrets
 import sqlite3
 from contextlib import closing
 from dataclasses import asdict, dataclass
@@ -10,6 +11,7 @@ from threading import TIMEOUT_MAX
 
 from .database import connect
 from .screen_layout import ScreenLayout, validate_screen_layout
+from .media import MediaSettings, default_media_settings, validate_media_settings
 
 
 COLOUR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -52,6 +54,10 @@ class DisplaySettings:
     screen_layout: ScreenLayout | None = None
     screen_layout_enabled: bool = False
     screen_layout_error: bool = False
+    media_settings: MediaSettings | None = None
+    media_settings_error: bool = False
+    briefing_token: str | None = None
+    briefing_filename: str | None = None
 
     @property
     def timer_base_seconds(self) -> int:
@@ -200,7 +206,8 @@ class DisplaySettingsStore:
                     announcement_media_type, announcement_media_filename,
                     announcement_media_full_screen,
                     notification_sound_filename, success_sound_filename, failed_sound_filename,
-                    screen_layout, screen_layout_enabled
+                    screen_layout, screen_layout_enabled, media_settings,
+                    briefing_token, briefing_filename
                 FROM display_settings
                 WHERE id = 1
                 """
@@ -234,6 +241,22 @@ class DisplaySettingsStore:
             connection.execute(
                 "UPDATE display_settings SET screen_layout_enabled = 0, "
                 "updated_at = CURRENT_TIMESTAMP WHERE id = 1"
+            )
+            connection.commit()
+        return self.get()
+
+    def save_media_settings(self, value: object) -> DisplaySettings:
+        validated = validate_media_settings(value)
+        with closing(connect(self.database_path)) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            pending = connection.execute(
+                "SELECT briefing_token FROM display_settings WHERE id = 1"
+            ).fetchone()[0]
+            if pending:
+                raise ValueError("Finish or cancel the active briefing before changing media settings.")
+            connection.execute(
+                "UPDATE display_settings SET media_settings = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
+                (json.dumps(validated, separators=(",", ":")),),
             )
             connection.commit()
         return self.get()
@@ -324,9 +347,25 @@ class DisplaySettingsStore:
     def start_timer(self) -> DisplaySettings:
         return self._update_timer(datetime.now(timezone.utc).isoformat())
 
-    def start_timer_if_not_running(self) -> DisplaySettings | None:
+    def start_timer_if_not_running(self, allow_briefing: bool = True) -> DisplaySettings | None:
         started_at = datetime.now(timezone.utc).isoformat()
         with closing(connect(self.database_path)) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current = connection.execute(
+                "SELECT timer_started_at, briefing_token, media_settings FROM display_settings WHERE id = 1"
+            ).fetchone()
+            if current["timer_started_at"] is not None or current["briefing_token"] is not None:
+                return None
+            media = self._read_media_settings(current["media_settings"])[0]
+            if allow_briefing and media["briefing_enabled"]:
+                connection.execute(
+                    "UPDATE display_settings SET briefing_token = ?, briefing_filename = ?, "
+                    "room_completed_at = NULL, room_failed_at = NULL WHERE id = 1",
+                    (secrets.token_urlsafe(32), media["briefing_video"]),
+                )
+                self._clear_session_hints(connection)
+                connection.commit()
+                return self.get()
             result = connection.execute(
                 """
                 UPDATE display_settings
@@ -344,6 +383,34 @@ class DisplaySettingsStore:
             self._clear_session_hints(connection)
             connection.commit()
         return self.get()
+
+    def finish_briefing(self, token: str) -> DisplaySettings | None:
+        with closing(connect(self.database_path)) as connection:
+            result = connection.execute(
+                """
+                UPDATE display_settings SET briefing_token = NULL, briefing_filename = NULL,
+                    timer_started_at = ?, timer_paused_at = NULL,
+                    room_completed_at = NULL, room_failed_at = NULL,
+                    timer_run_duration_seconds = timer_duration_seconds,
+                    extra_time_seconds = 0, penalty_time_seconds = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = 1 AND briefing_token = ? AND timer_started_at IS NULL
+                """,
+                (datetime.now(timezone.utc).isoformat(), token),
+            )
+            connection.commit()
+        return self.get() if result.rowcount == 1 else None
+
+    def cancel_briefing(self, token: str) -> DisplaySettings | None:
+        with closing(connect(self.database_path)) as connection:
+            result = connection.execute(
+                "UPDATE display_settings SET briefing_token = NULL, briefing_filename = NULL, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = 1 AND briefing_token = ? "
+                "AND timer_started_at IS NULL",
+                (token,),
+            )
+            connection.commit()
+        return self.get() if result.rowcount == 1 else None
 
     def reset_timer(self) -> DisplaySettings:
         return self._update_timer(None, clear_hints=False)
@@ -626,7 +693,9 @@ class DisplaySettingsStore:
         def to_dict(self) -> dict[str, object]:
             return asdict(self)
 
-    def get_leaderboard(self) -> list[LeaderboardEntry]:
+    def get_leaderboard(
+        self, start: str | None = None, end: str | None = None, limit: int | None = None,
+    ) -> list[LeaderboardEntry]:
         """Return leaderboard entries ordered by best performance.
 
         Completed rooms rank before failed rooms. Within each outcome, ordering is
@@ -640,12 +709,16 @@ class DisplaySettingsStore:
                        time_taken_seconds, time_remaining_seconds, completed_at,
                        outcome
                 FROM room_results
+                WHERE (? IS NULL OR substr(completed_at, 1, 10) >= ?)
+                  AND (? IS NULL OR substr(completed_at, 1, 10) <= ?)
                 ORDER BY CASE outcome WHEN 'completed' THEN 0 ELSE 1 END,
                          time_remaining_seconds DESC,
                          penalties ASC,
                          hints_used ASC,
                          completed_at ASC
-                """
+                LIMIT ?
+                """,
+                (start, start, end, end, limit if limit is not None else -1),
             ).fetchall()
             return [
                 DisplaySettingsStore.LeaderboardEntry(**dict(row))
@@ -1203,6 +1276,7 @@ class DisplaySettingsStore:
                 """
                 UPDATE display_settings
                 SET timer_started_at = ?, timer_paused_at = NULL, room_completed_at = NULL,
+                    briefing_token = NULL, briefing_filename = NULL,
                     room_failed_at = NULL,
                     timer_run_duration_seconds = timer_duration_seconds,
                     extra_time_seconds = 0, penalty_time_seconds = 0,
@@ -1365,7 +1439,24 @@ class DisplaySettingsStore:
             )
             values["screen_layout_enabled"] = False
             values["screen_layout_error"] = True
+        values["media_settings"], values["media_settings_error"] = DisplaySettingsStore._read_media_settings(
+            values.get("media_settings")
+        )
+        if row["media_settings"] is None:
+            values["media_settings"]["hint_colour"] = values["accent_colour"]
         return values
+
+    @staticmethod
+    def _read_media_settings(serialized: object) -> tuple[MediaSettings, bool]:
+        if serialized is None:
+            return default_media_settings(), False
+        try:
+            if not isinstance(serialized, str) or len(serialized) > 4096:
+                raise ValueError("Media settings exceed the supported size.")
+            return validate_media_settings(json.loads(serialized)), False
+        except (ValueError, TypeError, RecursionError):
+            logging.getLogger(__name__).warning("Invalid media settings; media features disabled.")
+            return default_media_settings(), True
 
     @staticmethod
     def _announcement_has_expired(expires_at: object) -> bool:

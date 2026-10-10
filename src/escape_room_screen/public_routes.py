@@ -1,4 +1,5 @@
-from flask import Flask, Response, jsonify, render_template, send_from_directory
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
+import re
 
 from .runtime import DisplayRuntime
 
@@ -28,6 +29,23 @@ def register_public_routes(app: Flask, runtime: DisplayRuntime) -> None:
         response = jsonify(display_snapshot())
         response.headers["Cache-Control"] = "no-store"
         return response
+
+    @app.post("/api/briefing/finished")
+    def briefing_finished() -> Response:
+        # Only the capability for the current briefing can transition this run.
+        if request.content_length is None or request.content_length > 512:
+            return jsonify(error="A small briefing completion object is required."), 400
+        values = request.get_json(silent=True)
+        token = values.get("token") if isinstance(values, dict) else None
+        if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+            return jsonify(error="A valid briefing token is required."), 400
+        settings = store.finish_briefing(token)
+        if settings is None:
+            return jsonify(error="This briefing is no longer active."), 409
+        runtime.record_action("briefing", "Briefing finished; timer started")
+        runtime.publish_current_settings()
+        runtime.schedule_timer_events(settings)
+        return jsonify(settings.to_dict())
 
     @app.get("/api/gpio/activity")
     def get_gpio_activity() -> Response:

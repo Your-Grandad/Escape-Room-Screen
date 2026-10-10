@@ -13,6 +13,11 @@
         <h1>{{ t("stats.title") }}</h1>
       </div>
       {% if error %}<p class="error">{{ error }}</p>{% endif %}
+      <form method="get" action="{{ url_for('result_report') }}" class="leaderboard-controls">
+        <label>{{ t("media.report_start") }} <input type="date" name="start"></label>
+        <label>{{ t("media.report_end") }} <input type="date" name="end"></label>
+        <button type="submit">{{ t("media.export_pdf") }}</button>
+      </form>
       <section aria-labelledby="completion-statistics-heading">
         <h2 id="completion-statistics-heading">{{ t("stats.completion_statistics") }}</h2>
         <div class="statistics-grid">

@@ -85,6 +85,7 @@
         </form>
       </div>
       <p id="layout-status" role="status" aria-live="polite"></p>
+      {% include "includes/donate_widget.html" %}
     </main>
     {% include "includes/admin_scripts.html" %}
     <script>window.screenLayoutEditor = {{ {"layout": settings.screen_layout, "defaultLayout": default_layout, "enabled": settings.screen_layout_enabled, "serverDisabled": layout_disabled, "translations": client_translations("layout")}|tojson }};</script>

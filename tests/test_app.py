@@ -151,8 +151,12 @@ class HomeScreenTests(unittest.TestCase):
         self.assertIn(b'aria-label="Header"', page.data)
         self.assertIn(b'id="layout-save"', page.data)
         self.assertIn(b'action="/admin/screen-layout/default"', page.data)
-        for tag in (b"<video", b"<audio", b"<iframe", b"<img"):
+        for tag in (b"<video", b"<audio", b"<img"):
             self.assertNotIn(tag, page.data)
+        draft = page.data.split(b'id="screen-layout-stage"', 1)[1].split(
+            b'<section class="layout-properties"', 1
+        )[0]
+        self.assertNotIn(b"<iframe", draft)
         home = self.client.get("/")
         self.assertNotIn(b'class="home-screen custom-layout', home.data)
         self.assertIn(b"screen-layout.js", home.data)
@@ -407,6 +411,7 @@ class HomeScreenTests(unittest.TestCase):
         for path in (
             "/admin",
             "/admin/settings",
+            "/admin/screen-layout",
             "/admin/sounds",
             "/admin/stats",
             "/admin/users",
@@ -521,6 +526,8 @@ class HomeScreenTests(unittest.TestCase):
         for path in (
             "/admin",
             "/admin/settings",
+            "/admin/screen-layout",
+            "/admin/media",
             "/admin/sounds",
             "/admin/stats",
             "/admin/users",

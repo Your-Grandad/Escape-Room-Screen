@@ -30,12 +30,16 @@ from .database import (
 from .runtime import DisplayRuntime
 from .localization import translate
 from .screen_layout import default_screen_layout
+from .media import default_media_settings
+from .reports import create_result_report, validate_report_dates
 from .uploads import (
     delete_uploaded_files,
     save_background_image,
     save_hint_media,
     save_logo_image,
     save_sound,
+    save_font,
+    save_video,
 )
 
 
@@ -447,6 +451,100 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         require_admin()
         return render_statistics_page()
 
+    @app.get("/admin/reports/results.pdf")
+    def result_report() -> Response:
+        require_admin()
+        try:
+            start, end = validate_report_dates(
+                request.args.get("start", ""), request.args.get("end", ""),
+            )
+            entries = store.get_leaderboard(start, end, limit=1001)
+            pdf = create_result_report(store.get().title, entries, start, end)
+        except ValueError as error:
+            return jsonify(error=str(error)), 400
+        return Response(pdf, mimetype="application/pdf", headers={
+            "Content-Disposition": 'attachment; filename="room-results.pdf"',
+            "Cache-Control": "no-store",
+        })
+
+    @app.route("/admin/media", methods=["GET", "POST"])
+    def media_settings() -> str | Response:
+        def render(error: str | None = None) -> str:
+            return render_template(
+                "media.html", settings=store.get(), csrf_token=csrf_token(), error=error,
+            )
+        require_admin()
+        if request.method == "GET":
+            return render()
+        require_csrf()
+        current = store.get()
+        if current.briefing_token:
+            return render("Finish or cancel the active briefing before changing media settings."), 409
+        values = dict(current.media_settings or default_media_settings())
+        uploaded: list[str] = []
+        replaced: list[str] = []
+        try:
+            for name, saver in (
+                ("font_filename", save_font), ("background_video", save_video),
+                ("soundtrack", save_sound), ("briefing_video", save_video),
+            ):
+                filename = saver(request.files.get(name), upload_folder)
+                if filename:
+                    uploaded.append(filename)
+                if filename or request.form.get(f"remove_{name}") == "on":
+                    if values[name]:
+                        replaced.append(values[name])
+                    values[name] = filename
+            for name in ("background_video_enabled", "soundtrack_enabled", "briefing_enabled"):
+                values[name] = request.form.get(name) == "on"
+            values["text_colour"] = request.form.get("text_colour", "")
+            values["hint_colour"] = request.form.get("hint_colour", "")
+            volume = request.form.get("soundtrack_volume", "")
+            if not volume.isdecimal() or len(volume) > 3:
+                raise ValueError("Soundtrack volume must be an integer from 0 to 100.")
+            values["soundtrack_volume"] = int(volume)
+            store.save_media_settings(values)
+        except ValueError as error:
+            try:
+                delete_uploaded_files(upload_folder, uploaded)
+            except OSError:
+                app.logger.exception("Failed to clean up media uploads")
+            return render(str(error)), 400
+        except (OSError, RuntimeError):
+            app.logger.exception("Failed to save media settings")
+            try:
+                delete_uploaded_files(upload_folder, uploaded)
+            except OSError:
+                app.logger.exception("Failed to clean up media uploads")
+            return render("Unable to save media settings. Check server logs."), 500
+        try:
+            delete_uploaded_files(upload_folder, replaced)
+        except OSError:
+            app.logger.exception("Failed to delete replaced media")
+        runtime.record_action("media", "Updated media settings")
+        runtime.publish_current_settings()
+        return redirect(url_for("media_settings"))
+
+    @app.post("/admin/briefing/<action>")
+    def control_briefing(action: str) -> Response:
+        require_admin()
+        require_csrf()
+        current = store.get()
+        if not current.briefing_token:
+            return jsonify(error="No briefing is active."), 409
+        if action == "cancel":
+            settings = store.cancel_briefing(current.briefing_token)
+        elif action == "skip":
+            settings = store.finish_briefing(current.briefing_token)
+        else:
+            abort(404)
+        if settings is None:
+            return jsonify(error="The briefing has already changed."), 409
+        runtime.record_action("briefing", f"{action.capitalize()} video briefing")
+        runtime.publish_current_settings()
+        runtime.schedule_timer_events(settings)
+        return redirect(url_for("admin"))
+
     @app.post("/admin/results/<int:result_id>/delete")
     def delete_completion_result(result_id: int) -> Response:
         require_admin()
@@ -464,7 +562,6 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             "screen_layout.html",
             settings=store.get(),
             default_layout=default_screen_layout(),
-            lightweight_preview=True,
             layout_disabled=app.config["DISABLE_CUSTOM_LAYOUT"],
             csrf_token=csrf_token(),
         )
@@ -768,12 +865,15 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         require_csrf()
         try:
             if action == "start":
-                settings = store.start_timer_if_not_running()
+                settings = store.start_timer_if_not_running(
+                    allow_briefing=not app.config["DISABLE_SCREEN_MEDIA"],
+                )
                 if settings is None:
                     return jsonify(error=translate(g.locale, "timer.already_started")), 409
                 runtime.record_action(
                     "timer",
-                    f"Started timer ({timedelta(seconds=settings.timer_base_seconds)})",
+                    "Started video briefing" if settings.briefing_token
+                    else f"Started timer ({timedelta(seconds=settings.timer_base_seconds)})",
                 )
             elif action == "reset":
                 settings = store.reset_timer()

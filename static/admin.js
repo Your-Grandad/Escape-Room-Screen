@@ -117,6 +117,7 @@ function setCompletionMessage(text) {
 function updateActiveTimerSnapshot(settings) {
   activeTimerSnapshot = {
     timer_started_at: settings.timer_started_at,
+    briefing_token: settings.briefing_token,
     timer_duration_seconds: settings.timer_duration_seconds,
     timer_run_duration_seconds: settings.timer_run_duration_seconds,
     timer_paused_at: settings.timer_paused_at,
@@ -125,6 +126,8 @@ function updateActiveTimerSnapshot(settings) {
     extra_time_seconds: settings.extra_time_seconds,
     penalty_time_seconds: settings.penalty_time_seconds,
   };
+  const briefingControls = document.querySelector("#briefing-controls");
+  if (briefingControls) briefingControls.hidden = !settings.briefing_token;
   updateTimerPauseButton(settings);
 }
 
@@ -372,16 +375,18 @@ function initTimerActionButtons() {
           updateActiveTimerSnapshot(current);
           updateActiveTimerDisplay();
           if (
-            current.timer_started_at
+            (current.timer_started_at || current.briefing_token)
             && !current.room_completed_at
             && !current.room_failed_at
-            && !window.confirm(window.translate("js.confirm_timer_reset"))
+            && !window.confirm(window.translate(
+              current.briefing_token ? "media.confirm_briefing_reset" : "js.confirm_timer_reset",
+            ))
           ) return;
         }
         const settings = await post(`/admin/timer/${button.dataset.timerAction}`);
         setStatusText(
           button.dataset.timerAction === "start"
-            ? window.translate("js.timer_started", {
+            ? settings.briefing_token ? window.translate("media.briefing_active") : window.translate("js.timer_started", {
               duration: adminDom.formatClockDuration(adminDom.getTimerBaseSeconds(settings)),
             })
             : window.translate("js.timer_reset", {
@@ -407,7 +412,8 @@ function initTimerActionButtons() {
 function updateTimerActionButtons() {
   document.querySelectorAll("[data-timer-action]").forEach((button) => {
     button.disabled = timerActionPending || (
-      button.dataset.timerAction === "start" && Boolean(activeTimerSnapshot?.timer_started_at)
+      button.dataset.timerAction === "start"
+        && Boolean(activeTimerSnapshot?.timer_started_at || activeTimerSnapshot?.briefing_token)
     );
   });
 }

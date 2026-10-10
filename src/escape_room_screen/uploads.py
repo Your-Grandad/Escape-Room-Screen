@@ -76,6 +76,36 @@ def save_sound(upload: FileStorage | None, upload_folder: Path) -> str | None:
     )
 
 
+def save_video(upload: FileStorage | None, upload_folder: Path) -> str | None:
+    if upload is None or not upload.filename:
+        return None
+    extension = Path(upload.filename).suffix.lower()
+    header = upload.stream.read(12)
+    upload.stream.seek(0)
+    if extension not in VIDEO_EXTENSIONS:
+        raise ValueError("Video must be an MP4, WebM, or MOV file.")
+    if (
+        extension == ".webm" and not header.startswith(b"\x1a\x45\xdf\xa3")
+        or extension in (".mp4", ".mov") and header[4:8] != b"ftyp"
+    ):
+        raise ValueError("Invalid video container. Use MP4 (H.264 recommended) or WebM.")
+    return _save_upload(upload, upload_folder, extension)
+
+
+def save_font(upload: FileStorage | None, upload_folder: Path) -> str | None:
+    if upload is None or not upload.filename:
+        return None
+    extension = Path(upload.filename).suffix.lower()
+    signatures = {".woff2": b"wOF2", ".woff": b"wOFF", ".ttf": b"\x00\x01\x00\x00", ".otf": b"OTTO"}
+    header = upload.stream.read(4)
+    upload.stream.seek(0, 2)
+    size = upload.stream.tell()
+    upload.stream.seek(0)
+    if extension not in signatures or header != signatures[extension] or size > 2 * 1024 * 1024:
+        raise ValueError("Font must be a valid WOFF2, WOFF, TTF, or OTF file, no larger than 2 MiB.")
+    return _save_upload(upload, upload_folder, extension)
+
+
 def _save_sound_upload(
     upload: FileStorage,
     upload_folder: Path,
@@ -125,5 +155,10 @@ def _save_image_upload(
 
 def _save_upload(upload: FileStorage, upload_folder: Path, extension: str) -> str:
     saved_name = f"{uuid4().hex}{extension}"
-    upload.save(upload_folder / saved_name)
+    saved_path = upload_folder / saved_name
+    try:
+        upload.save(saved_path)
+    except OSError:
+        saved_path.unlink(missing_ok=True)
+        raise
     return saved_name

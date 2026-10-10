@@ -1,0 +1,56 @@
+.home-screen {
+  isolation: isolate;
+  color: var(--screen-text-colour, #f8fafc);
+  font-family: var(--screen-font, system-ui, sans-serif);
+}
+
+.home-screen #announcement-message {
+  color: var(--screen-hint-colour, var(--accent-colour));
+}
+
+#background-video {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: -1;
+  pointer-events: none;
+}
+
+#briefing-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: #000;
+  display: grid;
+  place-items: center;
+}
+
+#briefing-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+#media-status {
+  position: fixed;
+  bottom: 1rem;
+  left: 1rem;
+  right: 1rem;
+  z-index: 101;
+  padding: .6rem;
+  background: #102a43;
+  color: #fff;
+  font: 1rem system-ui, sans-serif;
+}
+
+#media-status button {
+  margin-left: 1rem;
+}
+
+#background-video[hidden],
+#briefing-panel[hidden],
+#media-status[hidden] {
+  display: none;
+}

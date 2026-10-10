@@ -4,7 +4,7 @@
       <div class="admin-navigation-timer-actions">
         <form action="{{ url_for('update_timer', action='start') }}" method="post" class="inline-form">
           <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
-          <button data-timer-action="start" type="submit" {% if settings.timer_started_at %}disabled{% endif %}>{{ t("timer.start") }}</button>
+          <button data-timer-action="start" type="submit" {% if settings.timer_started_at or settings.briefing_token %}disabled{% endif %}>{{ t("timer.start") }}</button>
         </form>
         <form action="{{ url_for('update_timer', action='reset') }}" method="post" class="inline-form">
           <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
@@ -27,6 +27,15 @@
           </div>
         </div>
       </section>
+      <section id="briefing-controls" {% if not settings.briefing_token %}hidden{% endif %}>
+        <p>{{ t("media.briefing_active") }}</p>
+        {% for action in ("skip", "cancel") %}
+          <form action="{{ url_for('control_briefing', action=action) }}" method="post" class="inline-form">
+            <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+            <button type="submit">{{ t("media." ~ action) }}</button>
+          </form>
+        {% endfor %}
+      </section>
     </div>
   {% endif %}
   <div class="admin-navigation-brand">
@@ -44,6 +53,7 @@
       <div>
         <a href="{{ url_for('settings') }}"{% if request.endpoint in ('settings', 'change_admin_password') %} aria-current="page"{% endif %}>{{ t("nav.customisation") }}</a>
         <a href="{{ url_for('screen_layout_editor') }}"{% if request.endpoint == 'screen_layout_editor' %} aria-current="page"{% endif %}>{{ t("layout.title") }}</a>
+        <a href="{{ url_for('media_settings') }}"{% if request.endpoint == 'media_settings' %} aria-current="page"{% endif %}>{{ t("media.title") }}</a>
         <a href="{{ url_for('sound_settings') }}"{% if request.endpoint in ('sound_settings', 'upload_sounds') %} aria-current="page"{% endif %}>{{ t("nav.sounds") }}</a>
         <a href="{{ url_for('gpio_settings') }}"{% if request.endpoint in ('gpio_settings', 'add_gpio_mapping', 'add_gpio_output_action') %} aria-current="page"{% endif %}>{{ t("nav.gpio") }}</a>
         <a href="{{ url_for('hint_library') }}"{% if request.endpoint in ('hint_library', 'create_hint_preset', 'update_hint_preset_category') %} aria-current="page"{% endif %}>{{ t("nav.hint_library") }}</a>

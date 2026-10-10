@@ -14,6 +14,8 @@ CLIENT_TRANSLATION_GROUPS = {
         "saved", "saved_disabled", "save_failed", "current_custom", "current_default",
     )),
     "admin": (
+        "media.briefing_active",
+        "media.confirm_briefing_reset",
         "js.request_failed",
         "js.timer_not_running",
         "js.elapsed",
@@ -78,6 +80,13 @@ CLIENT_TRANSLATION_GROUPS = {
         "js.output_off",
     ),
     "home": (
+        "media.font_failed",
+        "media.finish_failed",
+        "media.background_failed",
+        "media.soundtrack_failed",
+        "media.briefing_failed",
+        "media.briefing_disabled",
+        "media.invalid_settings",
         "js.players",
         "js.hints",
         "js.penalties",
