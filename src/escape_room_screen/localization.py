@@ -9,6 +9,10 @@ from flask import Flask, g, request, session
 
 CATALOG_DIRECTORY = Path(__file__).with_name("translations")
 CLIENT_TRANSLATION_GROUPS = {
+    "layout": tuple(f"layout.{key}" for key in (
+        "unavailable", "invalid", "unsaved", "pointer_fallback", "discarded",
+        "saved", "saved_disabled", "save_failed", "current_custom", "current_default",
+    )),
     "admin": (
         "js.request_failed",
         "js.timer_not_running",

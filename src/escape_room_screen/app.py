@@ -49,6 +49,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         MAX_UPLOAD_MB=max_upload_mb,
         DEFAULT_LOCALE=os.environ.get("DEFAULT_LOCALE", "en"),
         HIDE_DONATIONS=os.environ.get("HIDE_DONATIONS", "false").strip().lower() == "true",
+        DISABLE_CUSTOM_LAYOUT=os.environ.get("DISABLE_CUSTOM_LAYOUT", "false").strip().lower() == "true",
         SUPPORTED_LOCALES=("en", "es"),
         LOCALE_NAMES={"en": "English", "es": "Español"},
     )

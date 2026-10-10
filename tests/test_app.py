@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 import os
 import tempfile
 import unittest
@@ -16,6 +17,7 @@ from escape_room_screen.database import connect, initialize
 from escape_room_screen.display import DisplaySettingsStore, MAX_TIMER_DURATION_SECONDS
 from escape_room_screen.events import DisplayUpdateBroker
 from escape_room_screen.gpio import GpioController
+from escape_room_screen.screen_layout import default_screen_layout
 
 
 class FakeOutputGpioController:
@@ -136,6 +138,207 @@ class HomeScreenTests(unittest.TestCase):
             )
         self.addCleanup(app.extensions["gpio"].close)
         return app, app.test_client()
+
+    def test_screen_editor_is_lightweight_and_default_layout_is_unchanged(self) -> None:
+        settings = self.app.extensions["display_store"].get()
+        self.assertIsNone(settings.screen_layout)
+        self.assertFalse(settings.screen_layout_enabled)
+        self.assertFalse(settings.screen_layout_error)
+        self.login()
+        page = self.client.get("/admin/screen-layout")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Screen editor", page.data)
+        self.assertIn(b'aria-label="Header"', page.data)
+        self.assertIn(b'id="layout-save"', page.data)
+        self.assertIn(b'action="/admin/screen-layout/default"', page.data)
+        for tag in (b"<video", b"<audio", b"<iframe", b"<img"):
+            self.assertNotIn(tag, page.data)
+        home = self.client.get("/")
+        self.assertNotIn(b'class="home-screen custom-layout', home.data)
+        self.assertIn(b"screen-layout.js", home.data)
+        self.assertNotIn(b"screen-layout-editor.js", home.data)
+        self.assertNotIn(b"screen-layout-editor.js", self.client.get("/admin").data)
+
+    def test_player_screen_never_renders_previous_team_results(self) -> None:
+        store = self.app.extensions["display_store"]
+        store.start_timer()
+        store.complete_room()
+        store.save_completion_result("Previous Team", "4", "2", "1")
+        store.reset_timer()
+        page = self.client.get("/").data
+        for text in (b'id="team-info"', b'id="team-name"', b'id="team-details"', b"Last team"):
+            self.assertNotIn(text, page)
+        with self.client.get("/static/home.js") as response:
+            script = response.data
+        self.assertNotIn(b"updateLatestResult", script)
+        self.assertNotIn(b"#team-info", script)
+        self.login()
+        self.assertIn(b"Previous Team", self.client.get("/admin/stats").data)
+
+    def test_screen_layout_save_persists_and_publishes_without_changing_run(self) -> None:
+        csrf = self.login()
+        store = self.app.extensions["display_store"]
+        store.start_timer()
+        store.send_announcement("Keep this hint")
+        before = store.get()
+        layout = default_screen_layout()
+        layout["elements"]["title"]["x"] = 20
+        layout["elements"]["title"]["width"] = 60
+        layout["elements"]["logo"]["visible"] = False
+        layout["hint_layout"] = "side-by-side"
+        with patch.object(self.app.extensions["display_runtime"], "publish_current_settings") as publish:
+            response = self.client.post(
+                "/admin/screen-layout", json={"layout": layout, "enabled": True},
+                headers={"X-CSRF-Token": csrf},
+            )
+            self.assertEqual(response.status_code, 200)
+            publish.assert_called_once_with()
+        saved = DisplaySettingsStore(self.database_path).get()
+        self.assertEqual(saved.screen_layout, layout)
+        self.assertTrue(saved.screen_layout_enabled)
+        for key, value in before.to_dict().items():
+            if not key.startswith("screen_layout"):
+                self.assertEqual(saved.to_dict()[key], value)
+        self.assertEqual(self.client.get("/api/display").get_json()["screen_layout"], layout)
+        with self.client.get("/events", buffered=False) as response:
+            first = next(response.response).decode()
+            self.assertEqual(json.loads(first.split("data: ", 1)[1])["screen_layout"], layout)
+        with closing(connect(self.database_path)) as connection:
+            serialized = connection.execute(
+                "SELECT screen_layout FROM display_settings"
+            ).fetchone()[0]
+        self.assertLess(len(serialized), 2048)
+
+    def test_screen_layout_default_button_preserves_saved_design(self) -> None:
+        csrf = self.login()
+        store = self.app.extensions["display_store"]
+        layout = default_screen_layout()
+        store.save_screen_layout(layout, True)
+        with patch.object(self.app.extensions["display_runtime"], "publish_current_settings") as publish:
+            response = self.client.post(
+                "/admin/screen-layout/default",
+                data={"csrf_token": csrf},
+            )
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.headers["Location"], "/admin/screen-layout")
+            publish.assert_called_once_with()
+        self.assertEqual(store.get().screen_layout, layout)
+        self.assertFalse(store.get().screen_layout_enabled)
+        self.assertFalse(self.client.get("/api/display").get_json()["screen_layout_enabled"])
+
+    def test_screen_layout_routes_require_admin_and_csrf(self) -> None:
+        payload = {"layout": default_screen_layout(), "enabled": True}
+        self.assertEqual(self.client.get("/admin/screen-layout").status_code, 302)
+        for path in ("/admin/screen-layout", "/admin/screen-layout/default"):
+            self.assertEqual(self.client.post(path, json=payload).status_code, 401)
+        self.login()
+        for path in ("/admin/screen-layout", "/admin/screen-layout/default"):
+            self.assertEqual(self.client.post(path, json=payload).status_code, 400)
+            self.assertEqual(
+                self.client.post(path, json=payload, headers={"X-CSRF-Token": "invalid"}).status_code,
+                400,
+            )
+        self.assertIsNone(self.app.extensions["display_store"].get().screen_layout)
+
+    def test_screen_layout_validation_rejects_invalid_and_offscreen_values(self) -> None:
+        csrf = self.login()
+        good = default_screen_layout()
+        store = self.app.extensions["display_store"]
+        store.save_screen_layout(good, True)
+        invalid = [None, [], {}, {**good, "version": 2}, {**good, "version": True},
+                   {**good, "hint_layout": "arbitrary"}, {**good, "css": "body{display:none}"}]
+        missing = deepcopy(good)
+        del missing["elements"]["timer"]
+        invalid.append(missing)
+        for key, value in (
+            ("x", -1), ("x", 99), ("width", 0), ("height", 101),
+            ("font_size", 0.1), ("font_size", 21), ("align", "url(javascript:alert(1))"),
+            ("visible", "true"), ("x", True), ("x", "12%"),
+            ("x", float("nan")), ("x", float("inf")), ("x", 10**300),
+        ):
+            layout = deepcopy(good)
+            layout["elements"]["title"][key] = value
+            invalid.append(layout)
+        for layout in invalid:
+            with self.subTest(layout=layout):
+                with patch.object(self.app.extensions["display_runtime"], "publish_current_settings") as publish:
+                    response = self.client.post(
+                        "/admin/screen-layout",
+                        json={"layout": layout, "enabled": True},
+                        headers={"X-CSRF-Token": csrf},
+                    )
+                    self.assertEqual(response.status_code, 400)
+                    self.assertIn("error", response.get_json())
+                    publish.assert_not_called()
+                self.assertEqual(store.get().screen_layout, good)
+        for enabled in ("true", 1, None):
+            self.assertEqual(self.client.post(
+                "/admin/screen-layout", json={"layout": good, "enabled": enabled},
+                headers={"X-CSRF-Token": csrf},
+            ).status_code, 400)
+        self.assertEqual(self.client.post(
+            "/admin/screen-layout", data=" " * 8193, content_type="application/json",
+            headers={"X-CSRF-Token": csrf},
+        ).status_code, 400)
+
+    def test_invalid_saved_screen_layout_falls_back_and_can_be_repaired(self) -> None:
+        csrf = self.login()
+        store = self.app.extensions["display_store"]
+        for serialized in ('{"version":2}', "{invalid", "[" * 2000 + "]" * 2000, None):
+            with self.subTest(serialized=serialized):
+                with closing(connect(self.database_path)) as connection:
+                    connection.execute(
+                        "UPDATE display_settings SET screen_layout = ?, screen_layout_enabled = 1",
+                        (serialized,),
+                    )
+                    connection.commit()
+                with self.assertLogs("escape_room_screen.display", level="WARNING"):
+                    settings = store.get()
+                    page = self.client.get("/admin/screen-layout")
+                self.assertIsNone(settings.screen_layout)
+                self.assertFalse(settings.screen_layout_enabled)
+                self.assertTrue(settings.screen_layout_error)
+                self.assertIn(b"The saved layout is invalid", page.data)
+        response = self.client.post(
+            "/admin/screen-layout", json={"layout": default_screen_layout(), "enabled": True},
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(store.get().screen_layout_error)
+
+    def test_server_override_forces_default_without_erasing_custom_layout(self) -> None:
+        layout = default_screen_layout()
+        self.app.extensions["display_store"].save_screen_layout(layout, True)
+        app = self.create_test_app(DISABLE_CUSTOM_LAYOUT=True)
+        self.addCleanup(app.extensions["gpio"].close)
+        self.addCleanup(app.extensions["display_runtime"].cancel_timer_events)
+        client = app.test_client()
+        self.login_client(client)
+        self.assertTrue(app.extensions["display_store"].get().screen_layout_enabled)
+        snapshot = client.get("/api/display").get_json()
+        self.assertFalse(snapshot["screen_layout_enabled"])
+        self.assertEqual(snapshot["screen_layout"], layout)
+        self.assertIn(b'data-layout-disabled="true"', client.get("/").data)
+        self.assertIn(b"Custom layouts are disabled by DISABLE_CUSTOM_LAYOUT", client.get("/admin/screen-layout").data)
+
+    def test_screen_layout_migration_preserves_legacy_settings(self) -> None:
+        path = Path(self.temporary_directory.name) / "legacy-layout.db"
+        with closing(connect(path)) as connection:
+            connection.execute(
+                "CREATE TABLE display_settings (id INTEGER PRIMARY KEY, title TEXT, "
+                "message TEXT, background_colour TEXT, accent_colour TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO display_settings VALUES (1, 'Old Room', 'Keep me', '#102a43', '#f6c453')"
+            )
+            connection.commit()
+        initialize(path)
+        initialize(path)
+        settings = DisplaySettingsStore(path).get()
+        self.assertEqual(settings.title, "Old Room")
+        self.assertEqual(settings.message, "Keep me")
+        self.assertIsNone(settings.screen_layout)
+        self.assertFalse(settings.screen_layout_enabled)
 
     def test_home_renders_persisted_default_settings(self) -> None:
         response = self.client.get("/")
@@ -351,7 +554,7 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn(b'<html lang="es">', response.data)
         self.assertIn("Pantalla principal".encode(), response.data)
-        self.assertIn("Último equipo".encode(), response.data)
+        self.assertIn("Tiempo restante".encode(), response.data)
 
         follow_up = self.client.get("/")
         self.assertIn(b'<html lang="es">', follow_up.data)

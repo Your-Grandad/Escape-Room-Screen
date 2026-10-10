@@ -5,23 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("home.page_title") }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='7') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen-layout.css', v='1') }}">
   </head>
   <body
     class="home-screen{% if settings.logo_image %} has-logo{% endif %}"
+    data-layout-disabled="{{ layout_disabled|tojson }}"
     style="--background-colour: {{ settings.background_colour }}; --accent-colour: {{ settings.accent_colour }}; --background-image: {% if settings.background_image %}url('{{ url_for('uploaded_file', filename=settings.background_image) }}'){% else %}none{% endif %}"
   >
     <main>
-      <img id="logo" class="home-logo" src="{% if settings.logo_image %}{{ url_for('uploaded_file', filename=settings.logo_image) }}{% endif %}" alt="{{ t("home.logo") }}" {% if not settings.logo_image %}hidden{% endif %}>
-      <h1 id="title">{{ settings.title }}</h1>
-      <p id="message">{{ settings.message }}</p>
-      <p id="timer" data-duration-seconds="{{ settings.timer_base_seconds }}" aria-label="{{ t("home.timer_aria") }}">{{ "%02d:%02d"|format(settings.timer_base_seconds // 60, settings.timer_base_seconds % 60) }}</p>
-      <aside id="team-info" class="team-info" hidden>
-        <h2>{{ t("home.last_team") }}</h2>
-        <p id="team-name"></p>
-        <p id="team-details"></p>
-      </aside>
+      <img id="logo" class="home-logo" data-layout-element="logo" src="{% if settings.logo_image %}{{ url_for('uploaded_file', filename=settings.logo_image) }}{% endif %}" alt="{{ t("home.logo") }}" {% if not settings.logo_image %}hidden{% endif %}>
+      <h1 id="title" data-layout-element="title">{{ settings.title }}</h1>
+      <p id="message" data-layout-element="message">{{ settings.message }}</p>
+      <p id="timer" data-layout-element="timer" data-duration-seconds="{{ settings.timer_base_seconds }}" aria-label="{{ t("home.timer_aria") }}">{{ "%02d:%02d"|format(settings.timer_base_seconds // 60, settings.timer_base_seconds % 60) }}</p>
     </main>
-    <aside id="announcement" class="announcement" hidden aria-live="assertive">
+    <aside id="announcement" data-layout-element="hints" class="announcement" hidden aria-live="assertive">
       <p id="announcement-message"></p>
       <img id="announcement-image" hidden alt="{{ t("home.announcement_image") }}">
       <video id="announcement-video" playsinline hidden controls autoplay></video>
@@ -30,7 +27,8 @@
     <script>window.i18n = {{ client_translations("home")|tojson }};</script>
     <script src="{{ url_for('static', filename='i18n.js') }}"></script>
     <script src="{{ url_for('static', filename='home-audio.js', v='2') }}"></script>
+    <script src="{{ url_for('static', filename='screen-layout.js', v='1') }}"></script>
     <script>window.initialDisplaySettings = {{ settings.to_dict()|tojson }};</script>
-    <script src="{{ url_for('static', filename='home.js', v='6') }}"></script>
+    <script src="{{ url_for('static', filename='home.js', v='8') }}"></script>
   </body>
 </html>

@@ -9,6 +9,8 @@ def register_public_routes(app: Flask, runtime: DisplayRuntime) -> None:
 
     def display_snapshot() -> dict[str, object]:
         settings = store.get().to_dict()
+        if app.config["DISABLE_CUSTOM_LAYOUT"]:
+            settings["screen_layout_enabled"] = False
         latest = store.get_latest_result()
         if latest is not None:
             settings["latest_result"] = latest.to_dict()
@@ -16,7 +18,10 @@ def register_public_routes(app: Flask, runtime: DisplayRuntime) -> None:
 
     @app.get("/")
     def home() -> str:
-        return render_template("home.html", settings=store.get())
+        return render_template(
+            "home.html", settings=store.get(),
+            layout_disabled=app.config["DISABLE_CUSTOM_LAYOUT"],
+        )
 
     @app.get("/api/display")
     def get_display() -> Response:

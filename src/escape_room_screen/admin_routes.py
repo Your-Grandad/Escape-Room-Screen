@@ -29,6 +29,7 @@ from .database import (
 )
 from .runtime import DisplayRuntime
 from .localization import translate
+from .screen_layout import default_screen_layout
 from .uploads import (
     delete_uploaded_files,
     save_background_image,
@@ -455,6 +456,47 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         runtime.record_action("result", f"Deleted room result id={result_id}")
         runtime.publish_current_settings()
         return redirect(url_for("statistics"))
+
+    @app.get("/admin/screen-layout")
+    def screen_layout_editor() -> str:
+        require_admin()
+        return render_template(
+            "screen_layout.html",
+            settings=store.get(),
+            default_layout=default_screen_layout(),
+            lightweight_preview=True,
+            layout_disabled=app.config["DISABLE_CUSTOM_LAYOUT"],
+            csrf_token=csrf_token(),
+        )
+
+    @app.post("/admin/screen-layout")
+    def save_screen_layout() -> Response:
+        require_admin()
+        require_csrf()
+        if request.content_length is not None and request.content_length > 8192:
+            return jsonify(error="Screen layouts must be no larger than 8 KiB."), 400
+        try:
+            values = request.get_json(silent=True)
+        except RecursionError:
+            return jsonify(error="The screen layout JSON is nested too deeply."), 400
+        if not isinstance(values, dict) or set(values) != {"layout", "enabled"}:
+            return jsonify(error="A JSON layout and enabled setting are required."), 400
+        try:
+            settings = store.save_screen_layout(values["layout"], values["enabled"])
+        except ValueError as error:
+            return jsonify(error=str(error)), 400
+        runtime.record_action("layout", "Saved screen layout")
+        runtime.publish_current_settings()
+        return jsonify(settings.to_dict())
+
+    @app.post("/admin/screen-layout/default")
+    def disable_screen_layout() -> Response:
+        require_admin()
+        require_csrf()
+        store.disable_screen_layout()
+        runtime.record_action("layout", "Restored default screen layout")
+        runtime.publish_current_settings()
+        return redirect(url_for("screen_layout_editor"))
 
     @app.get("/admin/hints")
     def hint_library() -> str:

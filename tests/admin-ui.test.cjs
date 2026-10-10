@@ -380,6 +380,7 @@ function homeTimerFixture(duration, now = startedMilliseconds + 600000) {
       constructor(...args) { super(...(args.length ? args : [clock])); }
       static now() { return clock; }
     },
+    URLSearchParams,
     setInterval(handler, delay) { intervals.set(delay, handler); },
     setTimeout(handler, delay) {
       const id = ++timeoutSequence;

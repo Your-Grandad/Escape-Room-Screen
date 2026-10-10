@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="{{ current_locale }}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ t("layout.title") }}</title>
+    {% include "includes/admin_theme_head.html" %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen-layout.css', v='1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen-layout-editor.css', v='1') }}">
+  </head>
+  <body class="admin-page">
+    <main class="panel">
+      {% include "includes/admin_navigation.html" %}
+      <h1>{{ t("layout.title") }}</h1>
+      <p>{{ t("layout.description") }}</p>
+      <p>{{ t("layout.lightweight") }}</p>
+      <p id="layout-current-state">{{ t("layout.current_custom") if settings.screen_layout_enabled and not layout_disabled else t("layout.current_default") }}</p>
+      {% if settings.screen_layout_error %}<p class="error">{{ t("layout.stored_error") }}</p>{% endif %}
+      {% if layout_disabled %}<p class="error">{{ t("layout.server_disabled") }}</p>{% endif %}
+      <noscript><p class="error">{{ t("layout.no_script") }}</p></noscript>
+      <div class="screen-layout-editor">
+        <section aria-label="{{ t('layout.preview') }}">
+          <div id="screen-layout-stage" class="home-screen screen-layout-stage" style="--background-colour: {{ settings.background_colour }}; --accent-colour: {{ settings.accent_colour }}">
+            {% for name in default_layout.elements %}
+              <div data-layout-element="{{ name }}" tabindex="0" aria-label="{{ t('layout.title_element' if name == 'title' else 'layout.' ~ name) }}" class="layout-block{% if name == 'hints' %} announcement{% elif name == 'logo' %} home-logo{% endif %}" {% if name == 'hints' %}data-has-caption="true" data-has-visual-media="true"{% endif %}>
+                {%- if name == 'title' -%}{{ settings.title }}
+                {%- elif name == 'message' -%}{{ settings.message }}
+                {%- elif name == 'timer' -%}{{ "%02d:%02d:%02d"|format(settings.timer_base_seconds // 3600, (settings.timer_base_seconds % 3600) // 60, settings.timer_base_seconds % 60) }}
+                {%- elif name == 'logo' -%}{{ t("layout.logo") }}
+                {%- else -%}
+                  <p id="announcement-message">{{ t("layout.sample_hint") }}</p>
+                  <div class="layout-media-placeholder">{{ t("layout.media_placeholder") }}</div>
+                {%- endif -%}
+              </div>
+            {% endfor %}
+            <button id="layout-resize-handle" type="button" data-layout-resize aria-label="{{ t('layout.resize') }}"></button>
+          </div>
+          <p>{{ t("layout.keyboard_help") }}</p>
+          <label>{{ t("layout.preview_hint") }}
+            <select id="layout-preview-hint">
+              <option value="combined">{{ t("layout.combined") }}</option>
+              <option value="text">{{ t("layout.text_only") }}</option>
+              <option value="media">{{ t("layout.media_only") }}</option>
+            </select>
+          </label>
+        </section>
+        <section class="layout-properties" aria-label="{{ t('layout.properties') }}">
+          <label>{{ t("layout.element") }}
+            <select id="layout-element">
+              {% for name in default_layout.elements %}<option value="{{ name }}">{{ t("layout.title_element" if name == 'title' else "layout." ~ name) }}</option>{% endfor %}
+            </select>
+          </label>
+          <div class="layout-number-fields">
+            {% for name in ('x', 'y', 'width', 'height', 'font_size') %}
+              <label>{{ t("layout." ~ name) }}
+                <input data-layout-property="{{ name }}" type="number" min="{{ 0.5 if name == 'font_size' else 5 if name in ('width', 'height') else 0 }}" max="{{ 20 if name == 'font_size' else 100 }}" step="0.1">
+              </label>
+            {% endfor %}
+          </div>
+          <label>{{ t("layout.align") }}
+            <select data-layout-property="align">
+              {% for align in ('left', 'center', 'right') %}<option value="{{ align }}">{{ t("layout." ~ align) }}</option>{% endfor %}
+            </select>
+          </label>
+          <label><input data-layout-property="visible" type="checkbox"> {{ t("layout.visible") }}</label>
+          <label><input id="layout-snap" type="checkbox" checked> {{ t("layout.snap") }}</label>
+          <label>{{ t("layout.hint_layout") }}
+            <select id="layout-hint-mode">
+              <option value="stacked">{{ t("layout.stacked") }}</option>
+              <option value="side-by-side">{{ t("layout.side_by_side") }}</option>
+              <option value="text-only">{{ t("layout.text_only") }}</option>
+              <option value="media-only">{{ t("layout.media_only") }}</option>
+            </select>
+          </label>
+          <p>{{ t("layout.hint_fallback") }}</p>
+        </section>
+      </div>
+      <div class="form-actions">
+        <button id="layout-save" type="button" disabled>{{ t("layout.save") }}</button>
+        <button id="layout-cancel" type="button" disabled>{{ t("layout.cancel") }}</button>
+        <button id="layout-reset-draft" type="button" disabled>{{ t("layout.reset_draft") }}</button>
+        <form action="{{ url_for('disable_screen_layout') }}" method="post" class="inline-form">
+          <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+          <button type="submit">{{ t("layout.use_default") }}</button>
+        </form>
+      </div>
+      <p id="layout-status" role="status" aria-live="polite"></p>
+    </main>
+    {% include "includes/admin_scripts.html" %}
+    <script>window.screenLayoutEditor = {{ {"layout": settings.screen_layout, "defaultLayout": default_layout, "enabled": settings.screen_layout_enabled, "serverDisabled": layout_disabled, "translations": client_translations("layout")}|tojson }};</script>
+    <script src="{{ url_for('static', filename='screen-layout.js', v='1') }}"></script>
+    <script src="{{ url_for('static', filename='screen-layout-editor.js', v='1') }}"></script>
+  </body>
+</html>

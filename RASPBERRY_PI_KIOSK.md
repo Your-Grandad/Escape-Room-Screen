@@ -496,6 +496,40 @@ switches the Raspberry Pi HDMI signal using `vcgencmd`.
 
 ## Troubleshooting encountered during setup
 
+### Custom layout issues or limited RAM on a Raspberry Pi 3
+
+The screen editor under **Settings > Screen editor** does not decode videos
+or images or open a second player iframe. It uses local placeholders and only
+updates the server when saving. Prefer editing from another computer so the
+Pi's Chromium only runs the player screen. The player uses the small layout
+renderer, not the drag-and-drop editor.
+
+The original layout remains the default. To restore it, use **Use original
+default screen** in the editor; this also works without editor JavaScript.
+For a browser-only fallback, open `http://<pi-address>/?layout=default`.
+To force the original layout for every player, add this line to the existing
+`/etc/escape-room-screen/environment` file without replacing its secrets:
+
+```ini
+DISABLE_CUSTOM_LAYOUT=true
+```
+
+Then apply it:
+
+```bash
+sudo systemctl restart escape-room-screen.service
+```
+
+Remove the override and restart to allow custom layouts again. Saved designs
+are retained. Invalid layouts or missing layout assets automatically retain
+the original layout, with diagnostics in the server/browser logs.
+
+These fallbacks disable custom positioning, not video playback. On a 1 GB Pi,
+keep media modest, avoid unnecessary browser tabs, and test the actual kiosk
+with its intended videos. Reload the kiosk browser after updating client
+assets; restarting only the backend does not replace an already-open page's
+JavaScript.
+
 ### NGINX shows `502 Bad Gateway`, or live updates do not arrive
 
 Check the backend service and then the reverse proxy:

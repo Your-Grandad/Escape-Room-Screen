@@ -76,8 +76,51 @@ is in progress (running or paused). Cancelling leaves the run unchanged.
 
 Staff can delete individual entries under **Leaderboard** using the row's
 **Delete** button and confirmation prompt. Deletion is permanent and updates
-the completion statistics and the display's last-team result; it does not
-reset or otherwise change the current room session.
+the completion statistics; it does not reset or otherwise change the current
+room session. Previous teams and their results are shown on staff pages only,
+not on the player screen.
+
+### Screen layout editor
+
+Open **Settings > Screen editor** (`/admin/screen-layout`) to drag and resize
+the header, message, logo, timer, and hint area. Select a block to edit its
+percentage position and size, font size, alignment, and visibility. The yellow
+corner resizes the selected block; arrows move it, arrows on the corner resize
+it, and Shift makes larger steps. Grid snapping is optional. Numeric controls
+and keyboard editing remain available if pointer dragging is unsupported.
+
+Choose stacked media/text, side-by-side, text-only, or media-only hints.
+Text-only hints still show their text in media-only mode, and media hints
+without captions remain visible in text-only mode. Fullscreen hints and
+completion/failure screens retain their original presentation.
+
+Edits stay in the local preview until **Save and apply layout** publishes them
+to the player screen. **Cancel edits** restores the last saved design.
+**Reset preview positions** resets the draft; it does not change the live
+screen. **Use original default screen** disables custom positioning immediately,
+without deleting the saved design or changing the timer, hints, or room settings.
+
+The original layout is the default for existing and new installations. The
+editor uses vanilla JavaScript, no media/image decoders or preview iframe,
+and animation frames only while editing or resizing the preview. The player
+loads only the small layout renderer/CSS, not the editor, and no extra polling
+loop is added. The 16:9 preview uses placeholders and percentage-based positions;
+check the actual target TV, especially if it has a different aspect ratio.
+Use compressed images and Pi-compatible video resolutions; layout fallbacks
+do not fix memory pressure caused by Chromium itself or oversized media.
+
+Fallbacks for a Raspberry Pi 3 with 1 GB RAM:
+
+- Open `/?layout=default` to force the original layout in that browser.
+- Use **Use original default screen** from the editor, even if editor JavaScript
+  cannot load. The form still works without JavaScript.
+- Set `DISABLE_CUSTOM_LAYOUT=true` in the server environment and restart the app
+  to force the original screen for all browsers while retaining saved designs.
+
+Invalid saved layouts, missing layout scripts/CSS, or unavailable layout
+capabilities fall back to the original screen; diagnostics are logged to the
+server or browser console. Invalid stored layouts also show a warning in the
+editor. Saving a valid design repairs that configuration.
 
 Set the starting timer duration in **Settings > Customisation** using hours,
 minutes, and seconds, then save the display settings. The default is 1 hour
@@ -262,10 +305,10 @@ room. The home screen displays the recent GPIO activity.
 poetry run python -m unittest discover -s tests -v
 ```
 
-For the client-side timer and theme checks, using Node.js:
+For the client-side timer, theme, and screen editor checks, using Node.js:
 
 ```bash
-node --test tests/admin-ui.test.cjs
+node --test tests/*.test.cjs
 ```
 
 ## Raspberry Pi deployment

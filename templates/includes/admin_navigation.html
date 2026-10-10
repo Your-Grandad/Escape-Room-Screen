@@ -43,6 +43,7 @@
       <summary>{{ t("nav.settings") }}</summary>
       <div>
         <a href="{{ url_for('settings') }}"{% if request.endpoint in ('settings', 'change_admin_password') %} aria-current="page"{% endif %}>{{ t("nav.customisation") }}</a>
+        <a href="{{ url_for('screen_layout_editor') }}"{% if request.endpoint == 'screen_layout_editor' %} aria-current="page"{% endif %}>{{ t("layout.title") }}</a>
         <a href="{{ url_for('sound_settings') }}"{% if request.endpoint in ('sound_settings', 'upload_sounds') %} aria-current="page"{% endif %}>{{ t("nav.sounds") }}</a>
         <a href="{{ url_for('gpio_settings') }}"{% if request.endpoint in ('gpio_settings', 'add_gpio_mapping', 'add_gpio_output_action') %} aria-current="page"{% endif %}>{{ t("nav.gpio") }}</a>
         <a href="{{ url_for('hint_library') }}"{% if request.endpoint in ('hint_library', 'create_hint_preset', 'update_hint_preset_category') %} aria-current="page"{% endif %}>{{ t("nav.hint_library") }}</a>
@@ -53,7 +54,7 @@
       </div>
     </details>
     {% if settings is defined %}
-      <button id="open-preview" type="button">{{ t("admin.preview") }}</button>
+      {% if not lightweight_preview %}<button id="open-preview" type="button">{{ t("admin.preview") }}</button>{% endif %}
       <form action="{{ url_for('admin_logout') }}" method="post">
         <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
         <button type="submit">{{ t("admin.sign_out") }}</button>

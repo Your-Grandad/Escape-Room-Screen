@@ -8,9 +8,6 @@ const announcementImage = document.querySelector("#announcement-image");
 const announcementVideo = document.querySelector("#announcement-video");
 const announcementAudio = document.querySelector("#announcement-audio");
 const gpioActivity = document.querySelector("#gpio-activity");
-const teamInfo = document.querySelector("#team-info");
-const teamName = document.querySelector("#team-name");
-const teamDetails = document.querySelector("#team-details");
 const soundManager = window.HomeAudio.createSoundManager(window.location.search);
 announcementAudio.autoplay = soundManager.canPlaySounds;
 let timerStartedAt = null;
@@ -37,8 +34,16 @@ let previousMessage = null;
 let previousTitle = null;
 let previousRoomComplete = null;
 let previousRoomFailed = null;
+const forceDefaultLayout = new URLSearchParams(window.location.search).get("layout") === "default";
+let warnedAboutMissingLayout = false;
 
 function updateDisplay(settings) {
+  if (window.ScreenLayout) {
+    window.ScreenLayout.apply(document.body, settings, { forceDefault: forceDefaultLayout });
+  } else if (settings.screen_layout_enabled && !forceDefaultLayout && !warnedAboutMissingLayout) {
+    console.warn("Screen layout script is unavailable; using the default screen.");
+    warnedAboutMissingLayout = true;
+  }
   soundManager.updateFromSettings(settings);
 
   const hasAnnouncementNow = Boolean(settings.announcement || settings.announcement_media_filename);
@@ -91,9 +96,12 @@ function updateDisplay(settings) {
   extraTimeSeconds = settings.extra_time_seconds || 0;
   penaltyTimeSeconds = settings.penalty_time_seconds || 0;
   announcementMessage.textContent = settings.announcement || "";
+  announcement.dataset.hasCaption = String(Boolean(settings.announcement));
+  announcement.dataset.hasVisualMedia = String(Boolean(
+    settings.announcement_media_filename && ["image", "video"].includes(settings.announcement_media_type),
+  ));
   announcement.classList.toggle("full-screen", Boolean(settings.announcement_media_full_screen));
   updateAnnouncementMedia(settings);
-  updateLatestResult(settings.latest_result);
   updateTimer();
   updateRoomCompletion();
   updateRoomFailure(roomFailedAt);
@@ -216,35 +224,6 @@ function updateAnnouncementMedia(settings) {
     announcement.hidden = true;
     previousAnnouncementVisible = false;
   };
-}
-
-function updateLatestResult(latestResult) {
-  if (!teamInfo || !teamName || !teamDetails) {
-    return;
-  }
-
-  if (!latestResult) {
-    teamInfo.hidden = true;
-    return;
-  }
-
-  teamName.textContent = latestResult.group_name;
-  const remaining = latestResult.time_remaining_seconds >= 0
-    ? window.translate("js.left", {
-      value: formatDuration(latestResult.time_remaining_seconds),
-    })
-    : window.translate("js.overtime", {
-      value: formatDuration(-latestResult.time_remaining_seconds),
-    });
-  teamDetails.textContent = [
-    window.translate("js.players", { value: latestResult.group_size }),
-    window.translate("js.hints", { value: latestResult.hints_used }),
-    window.translate("js.penalties", { value: latestResult.penalties }),
-    `${window.translate("js.time", {
-      value: formatDuration(latestResult.time_taken_seconds),
-    })} (${remaining})`,
-  ].join(" • ");
-  teamInfo.hidden = false;
 }
 
 function updateTimer() {

@@ -1,4 +1,6 @@
 import re
+import json
+import logging
 import sqlite3
 from contextlib import closing
 from dataclasses import asdict, dataclass
@@ -7,6 +9,7 @@ from pathlib import Path
 from threading import TIMEOUT_MAX
 
 from .database import connect
+from .screen_layout import ScreenLayout, validate_screen_layout
 
 
 COLOUR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -46,6 +49,9 @@ class DisplaySettings:
     failed_sound_filename: str | None = None
     timer_duration_seconds: int = TIMER_DURATION_SECONDS
     timer_run_duration_seconds: int = TIMER_DURATION_SECONDS
+    screen_layout: ScreenLayout | None = None
+    screen_layout_enabled: bool = False
+    screen_layout_error: bool = False
 
     @property
     def timer_base_seconds(self) -> int:
@@ -193,7 +199,8 @@ class DisplaySettingsStore:
                     extra_time_seconds, penalty_time_seconds,
                     announcement_media_type, announcement_media_filename,
                     announcement_media_full_screen,
-                    notification_sound_filename, success_sound_filename, failed_sound_filename
+                    notification_sound_filename, success_sound_filename, failed_sound_filename,
+                    screen_layout, screen_layout_enabled
                 FROM display_settings
                 WHERE id = 1
                 """
@@ -206,6 +213,30 @@ class DisplaySettingsStore:
         except Exception:
             pass
         return DisplaySettings(**values)
+
+    def save_screen_layout(self, layout: object, enabled: bool) -> DisplaySettings:
+        if type(enabled) is not bool:
+            raise ValueError("The screen layout enabled setting must be true or false.")
+        validated = validate_screen_layout(layout)
+        with closing(connect(self.database_path)) as connection:
+            connection.execute(
+                """
+                UPDATE display_settings SET screen_layout = ?, screen_layout_enabled = ?,
+                    updated_at = CURRENT_TIMESTAMP WHERE id = 1
+                """,
+                (json.dumps(validated, separators=(",", ":")), enabled),
+            )
+            connection.commit()
+        return self.get()
+
+    def disable_screen_layout(self) -> DisplaySettings:
+        with closing(connect(self.database_path)) as connection:
+            connection.execute(
+                "UPDATE display_settings SET screen_layout_enabled = 0, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = 1"
+            )
+            connection.commit()
+        return self.get()
 
     def clear_expired_announcement(self) -> bool:
         with closing(connect(self.database_path)) as conn:
@@ -1313,6 +1344,27 @@ class DisplaySettingsStore:
         values["announcement_media_full_screen"] = bool(
             values.get("announcement_media_full_screen")
         )
+        values["screen_layout_enabled"] = bool(values.get("screen_layout_enabled"))
+        values["screen_layout_error"] = False
+        serialized_layout = values.get("screen_layout")
+        values["screen_layout"] = None
+        if serialized_layout is not None:
+            try:
+                if not isinstance(serialized_layout, str) or len(serialized_layout) > 8192:
+                    raise ValueError("Stored screen layout is not a small JSON object.")
+                values["screen_layout"] = validate_screen_layout(json.loads(serialized_layout))
+            except (ValueError, TypeError, OverflowError, RecursionError) as error:
+                logging.getLogger(__name__).warning(
+                    "Invalid saved screen layout; using the default screen: %s", error,
+                )
+                values["screen_layout_enabled"] = False
+                values["screen_layout_error"] = True
+        elif values["screen_layout_enabled"]:
+            logging.getLogger(__name__).warning(
+                "Custom screen layout is enabled without a saved layout; using the default screen."
+            )
+            values["screen_layout_enabled"] = False
+            values["screen_layout_error"] = True
         return values
 
     @staticmethod

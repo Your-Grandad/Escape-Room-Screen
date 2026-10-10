@@ -1,4 +1,4 @@
-{% include "includes/live_preview.html" %}
+{% if not lightweight_preview %}{% include "includes/live_preview.html" %}{% endif %}
 <script>window.csrfToken = {{ csrf_token|tojson }}; window.i18n = {{ client_translations("admin")|tojson }}; window.initialDisplaySettings = {{ settings.to_dict()|tojson }};</script>
 <script src="{{ url_for('static', filename='i18n.js') }}"></script>
 <script src="{{ url_for('static', filename='admin-dom.js', v='4') }}"></script>
