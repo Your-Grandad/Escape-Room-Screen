@@ -68,6 +68,17 @@ highlighted when five minutes or less remain, with a stronger warning in the
 last minute. Room controls label active, paused, off, and unavailable states;
 the pause-timer button is disabled until a run starts and after it ends.
 
+**Start timer** is disabled once a session has started, including while paused
+and after finishing; reset it before starting another run. Duplicate starts are
+also rejected by the server without changing the current timer or hints.
+**Reset timer** checks the latest state and asks for confirmation while a run
+is in progress (running or paused). Cancelling leaves the run unchanged.
+
+Staff can delete individual entries under **Leaderboard** using the row's
+**Delete** button and confirmation prompt. Deletion is permanent and updates
+the completion statistics and the display's last-team result; it does not
+reset or otherwise change the current room session.
+
 Set the starting timer duration in **Settings > Customisation** using hours,
 minutes, and seconds, then save the display settings. The default is 1 hour
 (60 minutes); the duration must be at least 1 second, with minutes and seconds
@@ -76,6 +87,14 @@ starts. Saving a new duration leaves the current running, paused, or finished
 session unchanged; resetting shows the saved duration for the next start.
 The room display, automatic hints/failure, and results use the current run's
 captured duration, including added time and penalties.
+
+The display receives live updates for pauses and hints, with an uncached HTTP
+refresh every five seconds as a fallback if the stream stalls or disconnects.
+Refreshes do not overlap and time out after eight seconds; unchanged snapshots
+do not reload media. The stream sends an initial snapshot, then waits for a
+change or a 20-second heartbeat instead of repeatedly sending duplicate frames.
+The staff live-preview iframe is lazy-loaded when opened, so an unused preview
+does not consume another live connection and polling loop on the Pi.
 
 For this built-in live-update broker, run one application worker. If the
 application later needs multiple workers or multiple Pis, replace the broker
@@ -204,6 +223,15 @@ and check overlays before using any example number. **Pause room interaction**
 in Admin and **Pause GPIO events** in Settings share one GPIO pause state.
 Neither pauses the countdown nor turns off an active output; use the separate
 timer control for the clock.
+
+Gameplay inputs (**Complete room** and **Send preset**) are only accepted while
+the timer is running, unpaused, and has time remaining. They are ignored before
+starting, during a timer pause, and after resetting, completing, failing, or
+running out of time. The room interaction button reflects this automatically;
+resuming the timer re-enables gameplay unless interaction was manually paused.
+Physical **Start timer** and **Toggle monitor power** inputs do not require a
+running timer, but still respect the manual GPIO pause. Staff controls and
+existing output states are unchanged.
 
 The `vcgencmd` command must be available to the account running the app for
 GPIO monitor control to work.

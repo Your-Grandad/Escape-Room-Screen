@@ -30,6 +30,7 @@
     <script>window.i18n = {{ client_translations("home")|tojson }};</script>
     <script src="{{ url_for('static', filename='i18n.js') }}"></script>
     <script src="{{ url_for('static', filename='home-audio.js', v='2') }}"></script>
-    <script src="{{ url_for('static', filename='home.js', v='5') }}"></script>
+    <script>window.initialDisplaySettings = {{ settings.to_dict()|tojson }};</script>
+    <script src="{{ url_for('static', filename='home.js', v='6') }}"></script>
   </body>
 </html>

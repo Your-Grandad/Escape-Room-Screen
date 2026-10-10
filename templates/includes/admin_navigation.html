@@ -4,7 +4,7 @@
       <div class="admin-navigation-timer-actions">
         <form action="{{ url_for('update_timer', action='start') }}" method="post" class="inline-form">
           <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
-          <button data-timer-action="start" type="submit">{{ t("timer.start") }}</button>
+          <button data-timer-action="start" type="submit" {% if settings.timer_started_at %}disabled{% endif %}>{{ t("timer.start") }}</button>
         </form>
         <form action="{{ url_for('update_timer', action='reset') }}" method="post" class="inline-form">
           <input name="csrf_token" type="hidden" value="{{ csrf_token }}">

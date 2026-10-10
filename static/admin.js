@@ -23,6 +23,7 @@ const actionLogStorageKey = "admin-action-log-cache";
 const adminDom = window.AdminDom;
 let activeTimerSnapshot = window.initialDisplaySettings || null;
 let shownRoomResultKey = null;
+let timerActionPending = false;
 
 async function post(path, body) {
   const response = await fetch(path, {
@@ -62,6 +63,8 @@ function clearActionLogCache() {
 }
 
 function updateActiveTimerDisplay() {
+  updateGpioPauseButton();
+  updateTimerActionButtons();
   if (!activeTimerPanel || !activeTimerState || !activeTimerElapsed || !activeTimerRemaining) return;
   const timer = adminDom.getTimerPresentation(activeTimerSnapshot || {});
   const stateLabels = {
@@ -250,9 +253,7 @@ function initGpioPauseButton() {
       });
       const paused = response.paused;
       gpioPauseButton.dataset.paused = String(paused);
-      setControlState(gpioPauseButton, paused ? "paused" : "active", window.translate(
-        paused ? "js.resume_room_input" : "js.pause_room_input",
-      ));
+      updateGpioPauseButton();
       setStatusText(window.translate(
         paused ? "js.room_input_paused" : "js.room_input_active",
       ));
@@ -261,6 +262,20 @@ function initGpioPauseButton() {
       setStatusText(error.message, "error");
     }
   });
+}
+
+function updateGpioPauseButton() {
+  if (!gpioPauseButton) return;
+  const timer = adminDom.getTimerPresentation(activeTimerSnapshot || {});
+  const running = timer.state === "running" && timer.remainingSeconds > 0;
+  const paused = gpioPauseButton.dataset.paused === "true";
+  const state = running
+    ? (paused ? "paused" : "active")
+    : timer.state === "idle" ? "idle" : timer.state === "paused" ? "paused" : "finished";
+  gpioPauseButton.disabled = !running;
+  setControlState(gpioPauseButton, state, window.translate(
+    paused ? "js.resume_room_input" : "js.pause_room_input",
+  ));
 }
 
 function setControlState(button, state, actionLabel) {
@@ -346,7 +361,23 @@ function initTimerActionButtons() {
   document.querySelectorAll("[data-timer-action]").forEach((button) => {
     button.addEventListener("click", async (event) => {
       event.preventDefault();
+      if (button.disabled || timerActionPending) return;
+      timerActionPending = true;
+      updateTimerActionButtons();
       try {
+        if (button.dataset.timerAction === "reset") {
+          const response = await fetch("/api/display", { credentials: "same-origin" });
+          if (!response.ok) throw new Error(window.translate("js.failed_to_fetch_timer"));
+          const current = await response.json();
+          updateActiveTimerSnapshot(current);
+          updateActiveTimerDisplay();
+          if (
+            current.timer_started_at
+            && !current.room_completed_at
+            && !current.room_failed_at
+            && !window.confirm(window.translate("js.confirm_timer_reset"))
+          ) return;
+        }
         const settings = await post(`/admin/timer/${button.dataset.timerAction}`);
         setStatusText(
           button.dataset.timerAction === "start"
@@ -365,8 +396,19 @@ function initTimerActionButtons() {
         refreshActions();
       } catch (error) {
         setStatusText(error.message, "error");
+      } finally {
+        timerActionPending = false;
+        updateTimerActionButtons();
       }
     });
+  });
+}
+
+function updateTimerActionButtons() {
+  document.querySelectorAll("[data-timer-action]").forEach((button) => {
+    button.disabled = timerActionPending || (
+      button.dataset.timerAction === "start" && Boolean(activeTimerSnapshot?.timer_started_at)
+    );
   });
 }
 

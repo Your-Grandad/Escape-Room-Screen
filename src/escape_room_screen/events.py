@@ -1,31 +1,28 @@
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 import json
 from threading import Condition
-
-from .display import DisplaySettings
 
 
 class DisplayUpdateBroker:
     def __init__(self) -> None:
         self._condition = Condition()
         self._revision = 0
-        self._settings: DisplaySettings | None = None
 
-    def publish(self, settings: DisplaySettings) -> None:
+    def publish(self) -> None:
         with self._condition:
             self._revision += 1
-            self._settings = settings
             self._condition.notify_all()
 
-    def stream(self, initial_settings: DisplaySettings) -> Generator[str, None, None]:
+    def stream(
+        self, get_snapshot: Callable[[], dict[str, object]]
+    ) -> Generator[str, None, None]:
         revision = -1
-        settings = initial_settings
         while True:
             with self._condition:
-                if revision == self._revision and self._settings is not None:
-                    self._condition.wait(timeout=20)
-                if self._settings is not None:
-                    settings = self._settings
+                if revision == self._revision:
+                    self._condition.wait_for(
+                        lambda: revision != self._revision, timeout=20
+                    )
                 revision = self._revision
-            payload = json.dumps(settings.to_dict(), separators=(",", ":"))
+            payload = json.dumps(get_snapshot(), separators=(",", ":"))
             yield f"event: display\ndata: {payload}\n\n"

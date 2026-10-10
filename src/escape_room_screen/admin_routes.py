@@ -342,7 +342,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                 delete_uploaded_files(upload_folder, replaced_files)
             except OSError:
                 app.logger.exception("Failed to delete replaced display image")
-            runtime.publish(settings)
+            runtime.publish_current_settings()
             return redirect(url_for("settings"))
         return render_settings_page()
 
@@ -446,6 +446,16 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         require_admin()
         return render_statistics_page()
 
+    @app.post("/admin/results/<int:result_id>/delete")
+    def delete_completion_result(result_id: int) -> Response:
+        require_admin()
+        require_csrf()
+        if not store.delete_completion_result(result_id):
+            abort(404)
+        runtime.record_action("result", f"Deleted room result id={result_id}")
+        runtime.publish_current_settings()
+        return redirect(url_for("statistics"))
+
     @app.get("/admin/hints")
     def hint_library() -> str:
         require_admin()
@@ -536,7 +546,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         except ValueError as error:
             return jsonify(error=str(error)), 400
         runtime.record_action("announcement", f"Sent preset hint: {preset.title}")
-        runtime.publish(settings)
+        runtime.publish_current_settings()
         response = settings.to_dict()
         response["hint"] = hint.to_dict()
         return jsonify(response)
@@ -707,7 +717,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             settings = store.update(values)
         except ValueError as error:
             return jsonify(error=str(error)), 400
-        runtime.publish(settings)
+        runtime.publish_current_settings()
         return jsonify(settings.to_dict())
 
     @app.post("/admin/timer/<action>")
@@ -716,7 +726,9 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         require_csrf()
         try:
             if action == "start":
-                settings = store.start_timer()
+                settings = store.start_timer_if_not_running()
+                if settings is None:
+                    return jsonify(error=translate(g.locale, "timer.already_started")), 409
                 runtime.record_action(
                     "timer",
                     f"Started timer ({timedelta(seconds=settings.timer_base_seconds)})",
@@ -732,7 +744,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                 abort(404)
         except ValueError as error:
             return jsonify(error=str(error)), 400
-        runtime.publish(settings)
+        runtime.publish_current_settings()
         runtime.schedule_timer_events(settings)
         if request.form:
             return redirect(url_for("admin"))
@@ -762,7 +774,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             else f"Added {-seconds_int} seconds penalty to time taken"
         )
         runtime.record_action("timer_adjust", description)
-        runtime.publish(settings)
+        runtime.publish_current_settings()
         runtime.schedule_timer_events(settings)
         if request.form:
             return redirect(url_for("admin"))
@@ -777,7 +789,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         except ValueError as error:
             return jsonify(error=str(error)), 409
         runtime.record_action("room", "Completed room")
-        runtime.publish(settings)
+        runtime.publish_current_settings()
         runtime.cancel_timer_events()
         if request.form:
             return redirect(url_for("admin"))
@@ -792,7 +804,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         except ValueError as error:
             return jsonify(error=str(error)), 409
         runtime.record_action("room", "Failed room")
-        runtime.publish(settings)
+        runtime.publish_current_settings()
         runtime.cancel_timer_events()
         if request.form:
             return redirect(url_for("admin"))
@@ -845,7 +857,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         except ValueError as error:
             return jsonify(error=str(error)), 400
         runtime.record_action("announcement", f"Sent announcement: {hint.message}")
-        runtime.publish(settings)
+        runtime.publish_current_settings()
         if request.form:
             return redirect(url_for("admin"))
         response = settings.to_dict()
@@ -860,7 +872,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         if settings is None:
             return jsonify(error="No active announcement to cancel."), 409
         runtime.record_action("announcement", "Cancelled active announcement")
-        runtime.publish(settings)
+        runtime.publish_current_settings()
         if request.form:
             return redirect(url_for("admin"))
         return jsonify(settings.to_dict())
@@ -987,7 +999,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             remove_failed,
         )
         runtime.record_action("sounds", "Updated event sounds")
-        runtime.publish(settings)
+        runtime.publish_current_settings()
         if request.form:
             return redirect(url_for("sound_settings"))
         return jsonify(settings.to_dict())

@@ -355,5 +355,69 @@ setInterval(() => {
   updateAnnouncement();
 }, 250);
 
-const displayEvents = new EventSource("/events");
-displayEvents.addEventListener("display", (event) => updateDisplay(JSON.parse(event.data)));
+let lastDisplaySnapshot = null;
+let displayEventGeneration = 0;
+let displayRefreshPending = false;
+
+function applyDisplaySnapshot(settings) {
+  const snapshot = JSON.stringify(settings, (_key, value) => (
+    value && typeof value === "object" && !Array.isArray(value)
+      ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]))
+      : value
+  ));
+  if (snapshot === lastDisplaySnapshot) return;
+  updateDisplay(settings);
+  lastDisplaySnapshot = snapshot;
+}
+
+async function refreshDisplay() {
+  if (displayRefreshPending) return;
+  displayRefreshPending = true;
+  const generation = displayEventGeneration;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch("/api/display", {
+      cache: "no-store",
+      credentials: "same-origin",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`Display refresh failed: HTTP ${response.status}`);
+    const settings = await response.json();
+    if (generation === displayEventGeneration) applyDisplaySnapshot(settings);
+  } catch (error) {
+    console.warn("Unable to refresh kiosk display state.", error);
+  } finally {
+    clearTimeout(timeout);
+    displayRefreshPending = false;
+  }
+}
+
+if (window.initialDisplaySettings) applyDisplaySnapshot(window.initialDisplaySettings);
+
+if (typeof EventSource !== "undefined") {
+  const displayEvents = new EventSource("/events");
+  displayEvents.addEventListener("display", (event) => {
+    try {
+      const settings = JSON.parse(event.data);
+      applyDisplaySnapshot(settings);
+      displayEventGeneration += 1;
+    } catch (error) {
+      console.warn("Unable to apply a kiosk live update.", error);
+      refreshDisplay();
+    }
+  });
+  displayEvents.addEventListener("error", () => {
+    console.warn("Kiosk live updates disconnected; refreshing over HTTP.");
+    refreshDisplay();
+  });
+} else {
+  console.warn("Live updates are unavailable; refreshing the kiosk over HTTP.");
+}
+
+refreshDisplay();
+setInterval(refreshDisplay, 5000);
+window.addEventListener("online", refreshDisplay);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshDisplay();
+});

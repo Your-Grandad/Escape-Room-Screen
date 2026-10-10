@@ -37,11 +37,8 @@ class DisplayRuntime:
         self.configure_gpio_inputs()
         self.schedule_timer_events(self.store.get())
 
-    def publish(self, settings: DisplaySettings) -> None:
-        self.broker.publish(settings)
-
     def publish_current_settings(self) -> None:
-        self.publish(self.store.get())
+        self.broker.publish()
 
     def record_action(self, action_type: str, description: str) -> None:
         try:
@@ -69,12 +66,19 @@ class DisplayRuntime:
             return
         try:
             mapping = self.store.get_gpio_mapping_by_pin(pin)
+            event = mapping.event if mapping is not None else event
+            if (
+                event in ("complete-room", "send-preset")
+                and not self.store.get().timer_is_running
+            ):
+                self.store.record_gpio_event(pin, event, accepted=False)
+                return
             if mapping is None:
                 self._handle_legacy_gpio_event(pin, event)
                 return
             if mapping.event == "complete-room":
-                settings = self.store.complete_room()
-                self.publish(settings)
+                self.store.complete_room()
+                self.publish_current_settings()
                 self.store.record_gpio_event(pin, mapping.event, accepted=True)
                 return
             if mapping.event == "start-timer":
@@ -120,10 +124,8 @@ class DisplayRuntime:
                 and current.room_completed_at is None
                 and current.room_failed_at is None
             ):
-                updated, _hint = self.store.send_announcement(
-                    settings.auto_hint_message
-                )
-                self.publish(updated)
+                self.store.send_announcement(settings.auto_hint_message)
+                self.publish_current_settings()
 
         self._auto_hint_timer = Timer(delay, send_if_room_is_incomplete)
         self._auto_hint_timer.daemon = True
@@ -158,7 +160,7 @@ class DisplayRuntime:
                 return
             self.cancel_automatic_hint()
             self.record_action("room", "Automatically failed room when timer expired")
-            self.publish(updated)
+            self.publish_current_settings()
 
         if delay <= 0:
             fail_if_room_is_active()
@@ -212,8 +214,8 @@ class DisplayRuntime:
             if event == "display-toggle":
                 self.toggle_display_power(pin)
             return
-        settings = self.store.complete_room()
-        self.publish(settings)
+        self.store.complete_room()
+        self.publish_current_settings()
         self.store.record_gpio_event(pin, event, accepted=True)
 
     def toggle_display_power(self, pin: int | None = None) -> bool:
@@ -238,7 +240,7 @@ class DisplayRuntime:
             "timer",
             f"Started timer ({timedelta(seconds=settings.timer_base_seconds)}) from GPIO",
         )
-        self.publish(settings)
+        self.publish_current_settings()
         self.schedule_timer_events(settings)
         self.store.record_gpio_event(pin, event, accepted=True)
 
@@ -256,7 +258,7 @@ class DisplayRuntime:
             return
         media_type = None if preset.kind == "text" else preset.kind
         try:
-            settings, _hint = self.store.send_announcement(
+            self.store.send_announcement(
                 preset.message or "",
                 media_type=media_type,
                 media_filename=preset.media_filename,
@@ -269,5 +271,5 @@ class DisplayRuntime:
             )
             return
         self.record_action("announcement", f"GPIO sent preset hint: {preset.title}")
-        self.publish(settings)
+        self.publish_current_settings()
         self.store.record_gpio_event(pin, "send-preset", accepted=True)

@@ -522,6 +522,30 @@ sudo systemctl restart escape-room-screen.service
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
+### Kiosk countdown continues but pause or hints do not appear
+
+The countdown is calculated locally, so it can keep ticking after live
+updates stop. Current versions also refresh `/api/display` every five seconds
+without caching, so pauses and hints still arrive if `/events` disconnects
+or stalls. After updating the code, restart the app and reload Chromium on
+the kiosk itself; refreshing only the remote admin page will not update
+the kiosk's JavaScript.
+
+Check the event stream through both the backend and NGINX:
+
+```bash
+curl --no-buffer --max-time 25 http://127.0.0.1:8080/events
+curl --no-buffer --max-time 25 http://127.0.0.1/events
+```
+
+Expect one initial `event: display` frame, followed by room changes immediately
+or an idle heartbeat after 20 seconds, not a continuous flood of identical
+frames. These commands intentionally end with curl's timeout status after
+25 seconds because the stream stays open. If backend updates arrive but
+NGINX updates do not, check `proxy_buffering off` and `proxy_cache off`.
+Keep the documented single `gthread` worker with 16 threads; live streams
+must not monopolize all request-handling threads.
+
 ### `Command not found: gunicorn`, repeated restarts, and a blank kiosk
 
 Gunicorn is missing from the service's Poetry environment. NGINX returns

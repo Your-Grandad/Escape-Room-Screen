@@ -98,7 +98,259 @@ test("short custom timers use the same exact warning thresholds", () => {
   assert.equal(presentation(settings, 400).remainingSeconds, 0);
 });
 
+test("room interaction follows live timer state without clearing manual pause", () => {
+  const labels = new Map();
+  const button = {
+    dataset: { paused: "false" }, disabled: false,
+    classList: { toggle() {} }, addEventListener() {},
+    querySelector(selector) {
+      if (!labels.has(selector)) labels.set(selector, { textContent: "" });
+      return labels.get(selector);
+    },
+  };
+  const context = {
+    window: { translate: key => key },
+    document: {
+      querySelector: selector => selector === "#toggle-gpio-pause" ? button : null,
+      querySelectorAll: () => [],
+    },
+    Date: class extends Date {
+      static now() { return startedMilliseconds + 600000; }
+    },
+    setInterval() {},
+  };
+  vm.runInNewContext(readScript("admin-dom.js"), context);
+  vm.runInNewContext(readScript("admin.js"), context);
+  const update = (settings, state, disabled) => {
+    context.nextSettings = settings;
+    vm.runInNewContext("updateActiveTimerSnapshot(nextSettings); updateActiveTimerDisplay();", context);
+    assert.equal(button.dataset.controlState, state);
+    assert.equal(button.disabled, disabled);
+    assert.equal(labels.get(".control-state-label").textContent, `js.state_${state}`);
+  };
+  update({}, "idle", true);
+  const running = { timer_started_at: startedAt };
+  update(running, "active", false);
+  update({ ...running, timer_paused_at: startedAt }, "paused", true);
+  update(running, "active", false);
+  button.dataset.paused = "true";
+  update(running, "paused", false);
+  update({ ...running, timer_paused_at: startedAt }, "paused", true);
+  update(running, "paused", false);
+  assert.equal(button.dataset.paused, "true");
+  button.dataset.paused = "false";
+  for (const stop of ["room_completed_at", "room_failed_at"]) {
+    update({ ...running, [stop]: startedAt }, "finished", true);
+  }
+  update({ ...running, timer_run_duration_seconds: 600 }, "finished", true);
+  update(running, "active", false);
+  update({}, "idle", true);
+});
+
+function adminTimerActionFixture(initial = {}, latest = initial, confirmed = true) {
+  const requests = [];
+  const confirmations = [];
+  const status = { textContent: "", dataset: {} };
+  const buttons = ["start", "reset"].map(action => ({
+    dataset: { timerAction: action }, disabled: false,
+    addEventListener(name, handler) { this[name] = handler; },
+  }));
+  const context = {
+    window: {
+      initialDisplaySettings: initial, translate: key => key,
+      confirm(message) { confirmations.push(message); return confirmed; },
+    },
+    document: {
+      querySelector: selector => selector === "#status" ? status : null,
+      querySelectorAll: selector => selector === "[data-timer-action]" ? buttons : [],
+    },
+    async fetch(path, options) {
+      requests.push({ path, options });
+      return {
+        ok: true,
+        async json() {
+          return path === "/admin/timer/reset" ? {} : latest;
+        },
+      };
+    },
+    setInterval() {},
+  };
+  vm.runInNewContext(readScript("admin-dom.js"), context);
+  vm.runInNewContext(readScript("admin.js"), context);
+  return {
+    context, buttons, requests, confirmations, status,
+    click: action => buttons.find(button => button.dataset.timerAction === action).click({
+      preventDefault() {},
+    }),
+    update(settings) {
+      context.nextSettings = settings;
+      vm.runInNewContext("applyActiveTimerSettings(nextSettings);", context);
+    },
+  };
+}
+
+test("start stays disabled after a session starts and re-enables only after reset", async () => {
+  const fixture = adminTimerActionFixture();
+  assert.equal(fixture.buttons[0].disabled, false);
+  for (const settings of [
+    { timer_started_at: startedAt },
+    { timer_started_at: startedAt, timer_paused_at: startedAt },
+    { timer_started_at: startedAt, room_completed_at: startedAt },
+    { timer_started_at: startedAt, room_failed_at: startedAt },
+  ]) {
+    fixture.update(settings);
+    assert.equal(fixture.buttons[0].disabled, true);
+    await fixture.click("start");
+    assert.equal(fixture.requests.length, 0);
+  }
+  fixture.update({});
+  assert.equal(fixture.buttons[0].disabled, false);
+});
+
+test("reset checks current server state and cancellation never sends a reset", async () => {
+  for (const latest of [
+    { timer_started_at: startedAt },
+    { timer_started_at: startedAt, timer_paused_at: startedAt },
+  ]) {
+    const fixture = adminTimerActionFixture({}, latest, false);
+    await fixture.click("reset");
+    assert.deepEqual(fixture.requests.map(request => request.path), ["/api/display"]);
+    assert.deepEqual(fixture.confirmations, ["js.confirm_timer_reset"]);
+    assert.equal(fixture.buttons[0].disabled, true);
+    assert.equal(fixture.buttons[1].disabled, false);
+  }
+});
+
+test("confirming reset sends one request and allows the next start", async () => {
+  const fixture = adminTimerActionFixture({ timer_started_at: startedAt });
+  await fixture.click("reset");
+  assert.deepEqual(fixture.requests.map(request => request.path), [
+    "/api/display", "/admin/timer/reset",
+  ]);
+  assert.deepEqual(fixture.confirmations, ["js.confirm_timer_reset"]);
+  assert.equal(fixture.buttons[0].disabled, false);
+  assert.equal(fixture.buttons[1].disabled, false);
+});
+
+test("idle and finished timers reset without warning about an active run", async () => {
+  for (const latest of [
+    {},
+    { timer_started_at: startedAt, room_completed_at: startedAt },
+    { timer_started_at: startedAt, room_failed_at: startedAt },
+  ]) {
+    const fixture = adminTimerActionFixture({ timer_started_at: startedAt }, latest);
+    await fixture.click("reset");
+    assert.equal(fixture.confirmations.length, 0);
+    assert.deepEqual(fixture.requests.map(request => request.path), [
+      "/api/display", "/admin/timer/reset",
+    ]);
+  }
+});
+
+test("failure to check timer state blocks reset and reports an error", async () => {
+  const fixture = adminTimerActionFixture({ timer_started_at: startedAt });
+  fixture.context.fetch = async () => ({ ok: false });
+  await fixture.click("reset");
+  assert.equal(fixture.confirmations.length, 0);
+  assert.equal(fixture.status.textContent, "js.failed_to_fetch_timer");
+  assert.equal(fixture.status.dataset.level, "error");
+  assert.equal(fixture.buttons[0].disabled, true);
+  assert.equal(fixture.buttons[1].disabled, false);
+});
+
+test("pending timer actions cannot be double-submitted", async () => {
+  const fixture = adminTimerActionFixture({}, { timer_started_at: startedAt });
+  let resolve;
+  fixture.context.fetch = () => new Promise(done => { resolve = done; });
+  const first = fixture.click("start");
+  assert.equal(fixture.buttons[0].disabled, true);
+  assert.equal(fixture.buttons[1].disabled, true);
+  await fixture.click("start");
+  await fixture.click("reset");
+  resolve({ ok: true, json: async () => ({ timer_started_at: startedAt }) });
+  await first;
+  assert.equal(fixture.buttons[0].disabled, true);
+  assert.equal(fixture.buttons[1].disabled, false);
+});
+
+test("leaderboard delete confirmation works on cloned rows after paging and filtering", () => {
+  const makeRow = id => {
+    const cell = { textContent: "" };
+    const form = {
+      action: `/admin/results/${id}/delete`,
+      dataset: { confirmDelete: `Delete Team ${id}?` },
+      closest: () => form,
+    };
+    return {
+      dataset: { outcome: "completed", timeRemaining: String(1000 - id) },
+      form,
+      querySelector: selector => selector === ".team-name" ? { textContent: `Team ${id}` } : cell,
+      cloneNode: () => makeRow(id),
+    };
+  };
+  const rows = Array.from({ length: 12 }, (_, index) => makeRow(index + 1));
+  const listeners = new Map();
+  const element = value => ({
+    value, hidden: false, disabled: false, textContent: "",
+    addEventListener(name, handler) { this[name] = handler; },
+  });
+  const tbody = {
+    children: [], querySelectorAll: () => rows,
+    replaceChildren(...children) { this.children = children; },
+    addEventListener(name, handler) { listeners.set(name, handler); },
+  };
+  const elements = new Map([
+    ["leaderboard-table", { querySelector: () => tbody }],
+    ["leaderboard-filter", element("")],
+    ["leaderboard-sort", element("time_remaining_desc")],
+    ["leaderboard-page-size", element("10")],
+    ["leaderboard-pagination", element()],
+    ["leaderboard-previous", element()],
+    ["leaderboard-next", element()],
+    ["leaderboard-page-status", element()],
+    ["leaderboard-empty-row", { content: { firstElementChild: { cloneNode: () => ({}) } } }],
+  ]);
+  const confirmations = [];
+  let confirmed = false;
+  const template = readFileSync(join(__dirname, "..", "templates", "stats.html"), "utf8");
+  const script = template.match(/<script>\s*(\(function\(\)\{[\s\S]*?)<\/script>/)[1]
+    .replace(/\{\{ t\("stats.page_status"[^\n]*\}\}/, JSON.stringify("Page {page} of {pages} ({total} results)"));
+  vm.runInNewContext(script, {
+    document: { getElementById: id => elements.get(id) },
+    window: { confirm(message) { confirmations.push(message); return confirmed; } },
+  });
+  assert.equal(tbody.children.length, 10);
+  elements.get("leaderboard-next").click();
+  assert.equal(tbody.children.length, 2);
+  const submit = form => {
+    let prevented = false;
+    listeners.get("submit")({ target: form, preventDefault() { prevented = true; } });
+    return prevented;
+  };
+  assert.equal(tbody.children[0].form.action, "/admin/results/11/delete");
+  assert.equal(submit(tbody.children[0].form), true);
+  assert.equal(confirmations.at(-1), "Delete Team 11?");
+  confirmed = true;
+  assert.equal(submit(tbody.children[0].form), false);
+  elements.get("leaderboard-filter").value = "Team 12";
+  elements.get("leaderboard-filter").input();
+  assert.equal(tbody.children.length, 1);
+  assert.equal(tbody.children[0].form.action, "/admin/results/12/delete");
+  assert.equal(submit(tbody.children[0].form), false);
+  assert.equal(confirmations.at(-1), "Delete Team 12?");
+});
+
 function homeTimerFixture(duration, now = startedMilliseconds + 600000) {
+  const intervals = new Map();
+  const timeouts = new Map();
+  const streamEvents = new Map();
+  const documentEvents = new Map();
+  const windowEvents = new Map();
+  const requests = [];
+  const warnings = [];
+  let timeoutSequence = 0;
+  let updates = 0;
+  let clock = now;
   const elements = new Map();
   const getElement = (selector) => {
     if (!elements.has(selector)) elements.set(selector, {
@@ -110,31 +362,63 @@ function homeTimerFixture(duration, now = startedMilliseconds + 600000) {
     return elements.get(selector);
   };
   const soundManager = {
-    canPlaySounds: false, updateFromSettings() {},
+    canPlaySounds: false, updateFromSettings() { updates++; },
     playHint() {}, playSuccess() {}, playFailed() {},
   };
   const context = {
-    window: { HomeAudio: { createSoundManager: () => soundManager }, location: { search: "" }, translate: key => key },
+    window: {
+      HomeAudio: { createSoundManager: () => soundManager }, location: { search: "" },
+      translate: key => key,
+      addEventListener(name, handler) { windowEvents.set(name, handler); },
+    },
     document: {
       querySelector: getElement,
+      addEventListener(name, handler) { documentEvents.set(name, handler); },
       body: { style: { setProperty() {} }, classList: { add() {}, remove() {}, toggle() {} } },
     },
     Date: class extends Date {
-      constructor(...args) { super(...(args.length ? args : [now])); }
-      static now() { return now; }
+      constructor(...args) { super(...(args.length ? args : [clock])); }
+      static now() { return clock; }
     },
-    setInterval() {},
-    EventSource: class { addEventListener() {} },
+    setInterval(handler, delay) { intervals.set(delay, handler); },
+    setTimeout(handler, delay) {
+      const id = ++timeoutSequence;
+      timeouts.set(id, { handler, delay });
+      return id;
+    },
+    clearTimeout(id) { timeouts.delete(id); },
+    AbortController,
+    fetch(url, options) {
+      return new Promise((resolve, reject) => {
+        requests.push({ url, options, resolve, reject });
+        options.signal.addEventListener("abort", () => reject(new Error("Aborted")));
+      });
+    },
+    EventSource: class { addEventListener(name, handler) { streamEvents.set(name, handler); } },
+    console: { warn(...args) { warnings.push(args); } },
   };
   vm.createContext(context);
   vm.runInContext(readScript("home.js"), context);
   return {
     timer: getElement("#timer"),
+    announcement: getElement("#announcement"),
+    announcementMessage: getElement("#announcement-message"),
+    requests, warnings, intervals, timeouts,
+    get updates() { return updates; },
     update(settings) {
       context.settings = settings;
       vm.runInContext("updateDisplay(settings)", context);
     },
     tick() { vm.runInContext("updateTimer()", context); },
+    advance(milliseconds) { clock += milliseconds; },
+    poll() { return intervals.get(5000)(); },
+    event(settings) { streamEvents.get("display")({ data: JSON.stringify(settings) }); },
+    streamError() { streamEvents.get("error")(); },
+    online() { windowEvents.get("online")(); },
+    async respond(settings, status = 200) {
+      requests.at(-1).resolve({ ok: status === 200, status, json: async () => settings });
+      await new Promise(setImmediate);
+    },
   };
 }
 
@@ -173,6 +457,90 @@ test("room display never exceeds the saved start because of fractional seconds o
   const later = homeTimerFixture(2730, startedMilliseconds + 1125);
   later.update(settings);
   assert.equal(later.timer.textContent, "45:29");
+});
+
+const runningDisplay = {
+  title: "Room", message: "Ready", timer_duration_seconds: 3600,
+  timer_run_duration_seconds: 3600, timer_started_at: startedAt,
+};
+
+test("kiosk HTTP fallback applies pause and hints without any live events", async () => {
+  const home = homeTimerFixture(3600);
+  assert.equal(home.requests.length, 1);
+  assert.equal(home.requests[0].url, "/api/display");
+  assert.equal(home.requests[0].options.cache, "no-store");
+  await home.respond(runningDisplay);
+  assert.equal(home.timer.textContent, "50:00");
+  home.poll();
+  await home.respond({
+    ...runningDisplay, timer_paused_at: "2026-10-08T12:05:00Z",
+    announcement: "Look under the clock", announcement_expires_at: "2026-10-08T12:12:00Z",
+  });
+  assert.equal(home.timer.textContent, "55:00");
+  assert.equal(home.announcementMessage.textContent, "Look under the clock");
+  assert.equal(home.announcement.hidden, false);
+  home.advance(30000);
+  home.tick();
+  assert.equal(home.timer.textContent, "55:00");
+});
+
+test("a newer live update cannot be overwritten by an older pending HTTP response", async () => {
+  const home = homeTimerFixture(3600);
+  const paused = { ...runningDisplay, timer_paused_at: "2026-10-08T12:05:00Z" };
+  home.event(paused);
+  await home.respond(runningDisplay);
+  assert.equal(home.timer.textContent, "55:00");
+  assert.equal(home.updates, 1);
+});
+
+test("identical live and HTTP snapshots do not repaint or reload media", async () => {
+  const home = homeTimerFixture(3600);
+  const latestResult = { group_name: "Team", group_size: 4 };
+  home.event({ ...runningDisplay, latest_result: latestResult });
+  await home.respond({ latest_result: { group_size: 4, group_name: "Team" }, ...runningDisplay });
+  home.poll();
+  await home.respond({ latest_result: { group_size: 4, group_name: "Team" }, ...runningDisplay });
+  assert.equal(home.updates, 1);
+});
+
+test("HTTP refreshes are bounded, do not overlap, and recover after timeout", async () => {
+  const home = homeTimerFixture(3600);
+  home.poll();
+  home.poll();
+  home.streamError();
+  assert.equal(home.requests.length, 1);
+  const timeout = [...home.timeouts.values()][0];
+  assert.equal(timeout.delay, 8000);
+  timeout.handler();
+  await new Promise(setImmediate);
+  assert(home.warnings.some(warning => warning[0] === "Unable to refresh kiosk display state."));
+  home.poll();
+  assert.equal(home.requests.length, 2);
+  await home.respond(runningDisplay);
+  assert.equal(home.timer.textContent, "50:00");
+});
+
+test("stream disconnect and reconnecting network immediately trigger HTTP refreshes", async () => {
+  const home = homeTimerFixture(3600);
+  await home.respond(runningDisplay);
+  home.streamError();
+  assert.equal(home.requests.length, 2);
+  await home.respond({ ...runningDisplay, timer_paused_at: "2026-10-08T12:05:00Z" });
+  home.online();
+  assert.equal(home.requests.length, 3);
+  await home.respond(runningDisplay);
+  assert.equal(home.timer.textContent, "50:00");
+});
+
+test("failed HTTP responses are reported and preserve the last valid state", async () => {
+  const home = homeTimerFixture(3600);
+  home.event(runningDisplay);
+  await home.respond({}, 503);
+  assert.equal(home.timer.textContent, "50:00");
+  assert(home.warnings.some(warning => warning[0] === "Unable to refresh kiosk display state."));
+  home.poll();
+  await home.respond({ ...runningDisplay, timer_paused_at: "2026-10-08T12:05:00Z" });
+  assert.equal(home.timer.textContent, "55:00");
 });
 
 function themeFixture({ saved = null, systemDark = false, blockedStorage = false } = {}) {

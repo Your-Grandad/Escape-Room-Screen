@@ -14,6 +14,7 @@ from flask.testing import FlaskClient
 from escape_room_screen import create_app
 from escape_room_screen.database import connect, initialize
 from escape_room_screen.display import DisplaySettingsStore, MAX_TIMER_DURATION_SECONDS
+from escape_room_screen.events import DisplayUpdateBroker
 from escape_room_screen.gpio import GpioController
 
 
@@ -235,7 +236,7 @@ class HomeScreenTests(unittest.TestCase):
                 b'<output id="active-timer-remaining" aria-live="off">01:00:00',
                 response.data,
             )
-            self.assertIn(b'class="control-state-label">Active', response.data)
+            self.assertNotIn(b'class="control-state-label">Active', response.data)
             self.assertIn(b'class="control-state-label">Not running', response.data)
             self.assertIn(b'class="btn-success"', response.data)
             self.assertIn(b'class="btn-danger"', response.data)
@@ -439,6 +440,7 @@ class HomeScreenTests(unittest.TestCase):
                 self.assertIn(b'id="preview-dialog"', response.data)
                 self.assertIn(b'id="close-preview"', response.data)
                 self.assertIn(b'<iframe src="/?preview=1"', response.data)
+                self.assertIn(b'<iframe src="/?preview=1" loading="lazy"', response.data)
 
     def test_settings_page_saves_display_content(self) -> None:
         csrf_token = self.login()
@@ -1022,6 +1024,157 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["paused"])
 
+    def test_gameplay_gpio_inputs_require_a_running_timer(self) -> None:
+        runtime = self.app.extensions["display_runtime"]
+        store = runtime.store
+        preset = store.add_hint_preset("text", "Clue", "Look under the clock", None)
+        now = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
+        with patch("escape_room_screen.display.datetime", wraps=datetime) as clock:
+            clock.now.return_value = now
+            for event, saved_mapping in (
+                ("complete-room", False),
+                ("complete-room", True),
+                ("send-preset", True),
+            ):
+                if saved_mapping:
+                    store.add_gpio_mapping(
+                        "22", event, preset.id if event == "send-preset" else None,
+                    )
+                for state in ("idle", "paused", "completed", "failed", "reset", "expired", "running"):
+                    with self.subTest(event=event, saved_mapping=saved_mapping, state=state):
+                        clock.now.return_value = now
+                        store.reset_timer()
+                        if state != "idle":
+                            store.start_timer()
+                        if state == "paused":
+                            store.toggle_timer_paused()
+                        elif state == "completed":
+                            store.complete_room()
+                        elif state == "failed":
+                            store.fail_room()
+                        elif state == "reset":
+                            store.reset_timer()
+                        elif state == "expired":
+                            clock.now.return_value = now + timedelta(seconds=3600)
+                        before = store.get()
+                        hints = store.get_hints()
+                        # A saved pin mapping, not the callback label, determines the action.
+                        runtime.handle_gpio_event(22, "unused" if saved_mapping else event)
+                        activity = store.get_gpio_activity()[1][0]
+                        self.assertEqual(activity.event, event)
+                        self.assertEqual(activity.accepted, state == "running")
+                        if state != "running":
+                            self.assertEqual(store.get(), before)
+                            self.assertEqual(store.get_hints(), hints)
+                        elif event == "complete-room":
+                            self.assertIsNotNone(store.get().room_completed_at)
+                        else:
+                            self.assertEqual(store.get().announcement, "Look under the clock")
+                if saved_mapping:
+                    store.delete_gpio_mapping(22)
+
+    def test_room_interaction_follows_timer_and_preserves_manual_pause(self) -> None:
+        self.login()
+        runtime = self.app.extensions["display_runtime"]
+        store = runtime.store
+
+        def assert_interaction(state: str, active: bool, disabled: bool) -> None:
+            payload = self.client.get("/api/gpio/activity").get_json()
+            self.assertEqual(payload["interaction_active"], active)
+            page = self.client.get("/admin").data.decode()
+            button = page.split('<button id="toggle-gpio-pause"', 1)[1].split(">", 1)[0]
+            self.assertIn(f'data-control-state="{state}"', button)
+            self.assertEqual("disabled" in button, disabled)
+
+        assert_interaction("idle", False, True)
+        store.start_timer()
+        assert_interaction("active", True, False)
+        store.toggle_timer_paused()
+        assert_interaction("paused", False, True)
+        store.toggle_timer_paused()
+        assert_interaction("active", True, False)
+        store.set_gpio_paused(True)
+        before = store.get()
+        runtime.handle_gpio_event(22, "complete-room")
+        self.assertEqual(store.get(), before)
+        self.assertFalse(store.get_gpio_activity()[1][0].accepted)
+        assert_interaction("paused", False, False)
+        store.toggle_timer_paused()
+        store.toggle_timer_paused()
+        assert_interaction("paused", False, False)
+        store.set_gpio_paused(False)
+        assert_interaction("active", True, False)
+        store.complete_room()
+        assert_interaction("finished", False, True)
+        store.start_timer()
+        store.fail_room()
+        assert_interaction("finished", False, True)
+        store.reset_timer()
+        assert_interaction("idle", False, True)
+
+    def test_gpio_timer_start_and_monitor_power_work_without_running_timer(self) -> None:
+        runtime = self.app.extensions["display_runtime"]
+        store = runtime.store
+        for saved_mapping in (False, True):
+            with self.subTest(saved_mapping=saved_mapping):
+                store.reset_timer()
+                if saved_mapping:
+                    store.add_gpio_mapping("17", "start-timer")
+                    store.add_gpio_mapping("22", "display-toggle")
+                with (
+                    patch.object(runtime, "schedule_timer_events"),
+                    patch.object(runtime.display_power, "toggle", return_value=True) as toggle,
+                ):
+                    runtime.handle_gpio_event(22, "display-toggle")
+                    toggle.assert_called_once_with()
+                    self.assertTrue(store.get_gpio_activity()[1][0].accepted)
+                    runtime.handle_gpio_event(17, "start-timer")
+                    self.assertIsNotNone(store.get().timer_started_at)
+                    self.assertTrue(store.get_gpio_activity()[1][0].accepted)
+                    store.toggle_timer_paused()
+                    runtime.handle_gpio_event(22, "display-toggle")
+                    self.assertEqual(toggle.call_count, 2)
+                    store.complete_room()
+                    runtime.handle_gpio_event(22, "display-toggle")
+                    self.assertEqual(toggle.call_count, 3)
+                    store.fail_room()
+                    runtime.handle_gpio_event(22, "display-toggle")
+                    self.assertEqual(toggle.call_count, 4)
+                    store.reset_timer()
+                    store.set_gpio_paused(True)
+                    runtime.handle_gpio_event(17, "start-timer")
+                    self.assertIsNone(store.get().timer_started_at)
+                    self.assertFalse(store.get_gpio_activity()[1][0].accepted)
+                    runtime.handle_gpio_event(22, "display-toggle")
+                    self.assertEqual(toggle.call_count, 4)
+                    self.assertFalse(store.get_gpio_activity()[1][0].accepted)
+                    store.set_gpio_paused(False)
+                if saved_mapping:
+                    store.delete_gpio_mapping(17)
+                    store.delete_gpio_mapping(22)
+
+    def test_gameplay_gpio_deadline_includes_added_time_and_penalties(self) -> None:
+        runtime = self.app.extensions["display_runtime"]
+        store = runtime.store
+        preset = store.add_hint_preset("text", "Clue", "Keep looking", None)
+        store.add_gpio_mapping("22", "send-preset", preset.id)
+        now = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
+        with patch("escape_room_screen.display.datetime", wraps=datetime) as clock:
+            clock.now.return_value = now
+            store.update({**self.display_settings_values(), "timer_duration_seconds": 60})
+            store.start_timer()
+            store.adjust_timer(30)
+            store.adjust_timer(-10)
+            clock.now.return_value = now + timedelta(seconds=79)
+            runtime.handle_gpio_event(22, "send-preset")
+            self.assertTrue(store.get_gpio_activity()[1][0].accepted)
+            clock.now.return_value = now + timedelta(seconds=80)
+            before = store.get()
+            runtime.handle_gpio_event(22, "send-preset")
+            self.assertFalse(store.get_gpio_activity()[1][0].accepted)
+            self.assertEqual(store.get(), before)
+            self.assertFalse(self.client.get("/api/gpio/activity").get_json()["interaction_active"])
+
     def test_gpio_output_action_can_be_created_rendered_and_deleted(self) -> None:
         app, client = self.create_gpio_output_action_app()
         csrf_token = self.login_client(client)
@@ -1412,7 +1565,64 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(payload["title"], "Welcome")
         self.assertEqual(payload["message"], "Your message appears here.")
         self.assertIsNone(payload["timer_paused_at"])
+        self.assertEqual(response.headers["Cache-Control"], "no-cache, no-transform")
+        self.assertEqual(response.headers["X-Accel-Buffering"], "no")
         response.close()
+
+    def test_events_wait_before_first_publication_and_refresh_on_heartbeat(self) -> None:
+        broker = self.app.extensions["display_broker"]
+        with self.client.get("/events", buffered=False) as response:
+            initial = json.loads(next(response.response).split(b"data: ", 1)[1])
+            self.assertEqual(initial["title"], "Welcome")
+            self.app.extensions["display_store"].update({
+                **self.display_settings_values(), "title": "Changed without a notification",
+            })
+            with patch.object(broker._condition, "wait_for", return_value=False) as wait:
+                heartbeat = json.loads(next(response.response).split(b"data: ", 1)[1])
+            wait.assert_called_once()
+            self.assertEqual(wait.call_args.kwargs["timeout"], 20)
+            self.assertEqual(heartbeat["title"], "Changed without a notification")
+
+    def test_events_deliver_pause_and_hint_from_persisted_state(self) -> None:
+        csrf_token = self.login()
+        headers = {"X-CSRF-Token": csrf_token}
+        self.assertEqual(
+            self.client.post("/admin/timer/start", headers=headers).status_code, 200
+        )
+        with self.client.get("/events", buffered=False) as response:
+            next(response.response)
+            self.assertEqual(
+                self.client.post("/admin/timer/pause", headers=headers).status_code, 200
+            )
+            paused = json.loads(next(response.response).split(b"data: ", 1)[1])
+            self.assertIsNotNone(paused["timer_paused_at"])
+            self.assertEqual(
+                self.client.post(
+                    "/admin/announcement", json={"message": "Look under the clock"},
+                    headers=headers,
+                ).status_code, 200
+            )
+            hinted = json.loads(next(response.response).split(b"data: ", 1)[1])
+            self.assertEqual(hinted["announcement"], "Look under the clock")
+            self.assertEqual(hinted["timer_paused_at"], paused["timer_paused_at"])
+            with self.client.get("/api/display") as snapshot:
+                self.assertEqual(snapshot.headers["Cache-Control"], "no-store")
+                self.assertEqual(hinted, snapshot.get_json())
+
+    def test_display_broker_waits_for_revision_and_ignores_spurious_wakes(self) -> None:
+        broker = DisplayUpdateBroker()
+        stream = broker.stream(lambda: {"message": "Current state"})
+        self.addCleanup(stream.close)
+        self.assertIn('"message":"Current state"', next(stream))
+        with patch.object(broker._condition, "wait_for", return_value=False) as wait:
+            self.assertIn('"message":"Current state"', next(stream))
+        predicate = wait.call_args.args[0]
+        self.assertFalse(predicate())
+        broker.publish()
+        self.assertTrue(predicate())
+        with patch.object(broker._condition, "wait_for") as wait:
+            next(stream)
+        wait.assert_not_called()
 
     def test_admin_settings_update_display_api(self) -> None:
         csrf_token = self.login()
@@ -1449,6 +1659,59 @@ class HomeScreenTests(unittest.TestCase):
         )
         self.assertEqual(reset.status_code, 200)
         self.assertIsNone(reset.get_json()["timer_started_at"])
+
+    def test_timer_cannot_be_started_again_until_reset(self) -> None:
+        csrf_token = self.login()
+        headers = {"X-CSRF-Token": csrf_token}
+        runtime = self.app.extensions["display_runtime"]
+        store = runtime.store
+        for state in ("running", "paused", "completed", "failed"):
+            with self.subTest(state=state):
+                store.reset_timer()
+                self.assertEqual(
+                    self.client.post("/admin/timer/start", headers=headers).status_code, 200,
+                )
+                store.send_announcement("Keep this hint")
+                store.adjust_timer(120)
+                if state == "paused":
+                    store.toggle_timer_paused()
+                elif state == "completed":
+                    store.complete_room()
+                elif state == "failed":
+                    store.fail_room()
+                before = store.get()
+                hints = store.get_hints()
+                with (
+                    patch.object(runtime, "publish_current_settings") as publish,
+                    patch.object(runtime, "schedule_timer_events") as schedule,
+                    patch.object(runtime, "record_action") as record,
+                ):
+                    for form in (False, True):
+                        response = self.client.post(
+                            "/admin/timer/start",
+                            data={"csrf_token": csrf_token} if form else None,
+                            headers=None if form else headers,
+                        )
+                        self.assertEqual(response.status_code, 409)
+                        self.assertIn("Reset it before starting", response.get_json()["error"])
+                        self.assertEqual(store.get(), before)
+                        self.assertEqual(store.get_hints(), hints)
+                    publish.assert_not_called()
+                    schedule.assert_not_called()
+                    record.assert_not_called()
+                for path in ("/admin", "/admin/settings", "/admin/gpio", "/admin/stats"):
+                    page = self.client.get(path).data.decode()
+                    button = page.split('<button data-timer-action="start"', 1)[1].split(">", 1)[0]
+                    self.assertIn("disabled", button)
+                self.assertEqual(
+                    self.client.post("/admin/timer/reset", headers=headers).status_code, 200,
+                )
+                page = self.client.get("/admin").data.decode()
+                button = page.split('<button data-timer-action="start"', 1)[1].split(">", 1)[0]
+                self.assertNotIn("disabled", button)
+                self.assertEqual(
+                    self.client.post("/admin/timer/start", headers=headers).status_code, 200,
+                )
 
     def test_starting_duration_is_saved_and_survives_restart(self) -> None:
         csrf_token = self.login()
@@ -1550,6 +1813,7 @@ class HomeScreenTests(unittest.TestCase):
         headers = {"X-CSRF-Token": csrf_token}
         for action in (None, "pause", "complete", "fail"):
             with self.subTest(action=action):
+                self.app.extensions["display_store"].reset_timer()
                 self.app.extensions["display_store"].update({
                     **self.display_settings_values(), "timer_duration_seconds": 600,
                 })
@@ -1605,6 +1869,7 @@ class HomeScreenTests(unittest.TestCase):
         headers = {"X-CSRF-Token": csrf_token}
         for outcome, action in (("completed", "complete"), ("failed", "fail")):
             with self.subTest(outcome=outcome):
+                self.app.extensions["display_store"].reset_timer()
                 self.app.extensions["display_store"].update({
                     **self.display_settings_values(), "timer_duration_seconds": 5415,
                 })
@@ -2013,6 +2278,96 @@ class HomeScreenTests(unittest.TestCase):
         self.assertIn(b'id="leaderboard-pagination"', response.data)
         self.assertIn(b'value="10"', response.data)
         self.assertIn(b'value="all"', response.data)
+
+    def test_leaderboard_entries_can_be_deleted_individually(self) -> None:
+        csrf_token = self.login()
+        runtime = self.app.extensions["display_runtime"]
+        store = runtime.store
+        for outcome in ("completed", "failed"):
+            store.start_timer()
+            if outcome == "completed":
+                store.complete_room()
+            else:
+                store.fail_room()
+            store.save_completion_result("Same Team", "4", "1", "0")
+        entries = store.get_leaderboard()
+        self.assertEqual(len(entries), 2)
+        self.assertNotEqual(entries[0].id, entries[1].id)
+        newest = next(entry for entry in entries if entry.outcome == "failed")
+        older = next(entry for entry in entries if entry.outcome == "completed")
+        page = self.client.get("/admin/stats").data
+        for entry in entries:
+            self.assertIn(
+                f'action="/admin/results/{entry.id}/delete"'.encode(), page,
+            )
+        self.assertIn(b'data-delete-result data-confirm-delete="Delete the leaderboard entry for Same Team?', page)
+        self.assertIn(b'class="btn-danger">Delete</button>', page)
+        self.assertIn(b'colspan="10"', page)
+        before = store.get()
+        with patch.object(runtime, "publish_current_settings") as publish:
+            response = self.client.post(
+                f"/admin/results/{newest.id}/delete",
+                data={"csrf_token": csrf_token},
+            )
+            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.headers["Location"], "/admin/stats")
+            publish.assert_called_once_with()
+        self.assertEqual(store.get(), before)
+        self.assertEqual([entry.id for entry in store.get_leaderboard()], [older.id])
+        self.assertEqual(
+            [entry.id for entry in DisplaySettingsStore(self.database_path).get_leaderboard()],
+            [older.id],
+        )
+        summary = store.get_completion_statistics()[0]
+        self.assertEqual((summary.total, summary.completed, summary.failed), (1, 1, 0))
+        self.assertEqual(
+            self.client.get("/api/display").get_json()["latest_result"]["outcome"],
+            "completed",
+        )
+        response = self.client.post(
+            f"/admin/results/{older.id}/delete",
+            data={"csrf_token": csrf_token},
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"No room results yet.", response.data)
+        self.assertNotIn(b'data-delete-result data-confirm-delete=', response.data)
+        self.assertEqual(store.get_leaderboard(), [])
+        self.assertEqual(store.get_completion_statistics()[0].total, 0)
+        self.assertNotIn("latest_result", self.client.get("/api/display").get_json())
+        self.assertEqual(store.get(), before)
+
+    def test_leaderboard_deletion_requires_login_csrf_and_existing_result(self) -> None:
+        store = self.app.extensions["display_store"]
+        store.start_timer()
+        store.complete_room()
+        store.save_completion_result("Keep Me", "3", "0", "0")
+        entry = store.get_leaderboard()[0]
+        path = f"/admin/results/{entry.id}/delete"
+        self.assertEqual(self.client.post(path).status_code, 401)
+        csrf_token = self.login()
+        self.assertEqual(self.client.get(path).status_code, 405)
+        self.assertEqual(self.client.post(path).status_code, 400)
+        self.assertEqual(
+            self.client.post(path, data={"csrf_token": "invalid"}).status_code, 400,
+        )
+        self.assertEqual([result.id for result in store.get_leaderboard()], [entry.id])
+        with patch.object(self.app.extensions["display_runtime"], "publish_current_settings") as publish:
+            self.assertEqual(
+                self.client.post(
+                    f"/admin/results/{entry.id + 1}/delete",
+                    data={"csrf_token": csrf_token},
+                ).status_code,
+                404,
+            )
+            publish.assert_not_called()
+        self.assertEqual([result.id for result in store.get_leaderboard()], [entry.id])
+        self.assertEqual(
+            self.client.post(path, data={"csrf_token": csrf_token}).status_code, 302,
+        )
+        self.assertEqual(
+            self.client.post(path, data={"csrf_token": csrf_token}).status_code, 404,
+        )
 
     def test_completed_room_result_reflects_time_adjustments(self) -> None:
         csrf_token = self.login()

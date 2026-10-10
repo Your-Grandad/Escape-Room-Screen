@@ -10,13 +10,14 @@
       <button id="fail-room" class="btn-danger" type="submit">{{ t("controls.fail_room") }}</button>
     </form>
 
-    <button id="toggle-gpio-pause" type="button" data-paused="{{ gpio_paused|tojson }}" data-control-state="{{ 'paused' if gpio_paused else 'active' }}" class="state-control {{ 'btn-paused' if gpio_paused else 'btn-active' }}">
-      <span class="control-state-label">{{ t("js.state_paused") if gpio_paused else t("js.state_active") }}</span>
+    {% set timer_finished = settings.room_completed_at or settings.room_failed_at %}
+    {% set timer_state = 'idle' if not settings.timer_started_at else 'finished' if timer_finished else 'paused' if settings.timer_paused_at else 'active' if settings.timer_is_running else 'finished' %}
+    {% set interaction_state = timer_state if timer_state != 'active' else 'paused' if gpio_paused else 'active' %}
+    <button id="toggle-gpio-pause" type="button" data-paused="{{ gpio_paused|tojson }}" data-control-state="{{ interaction_state }}" class="state-control {{ 'btn-active' if interaction_state == 'active' else 'btn-paused' if interaction_state == 'paused' else 'btn-inactive' }}" {% if timer_state != 'active' %}disabled{% endif %}>
+      <span class="control-state-label">{{ t("js.state_" ~ interaction_state) }}</span>
       <span class="control-action-label">{% if gpio_paused %}{{ t("controls.resume_interaction") }}{% else %}{{ t("controls.pause_interaction") }}{% endif %}</span>
     </button>
 
-    {% set timer_finished = settings.room_completed_at or settings.room_failed_at %}
-    {% set timer_state = 'idle' if not settings.timer_started_at else 'finished' if timer_finished else 'paused' if settings.timer_paused_at else 'active' %}
     <button id="toggle-timer-pause" type="button" data-paused="{{ settings.timer_paused_at|tojson }}" data-control-state="{{ timer_state }}" class="state-control {{ 'btn-active' if timer_state == 'active' else 'btn-paused' if timer_state == 'paused' else 'btn-inactive' }}" {% if timer_state in ('idle', 'finished') %}disabled{% endif %}>
       <span class="control-state-label">{{ t("js.state_" ~ timer_state) }}</span>
       <span class="control-action-label">{% if settings.timer_paused_at %}{{ t("controls.resume_timer") }}{% else %}{{ t("controls.pause_timer") }}{% endif %}</span>

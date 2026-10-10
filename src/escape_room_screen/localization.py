@@ -41,6 +41,7 @@ CLIENT_TRANSLATION_GROUPS = {
         "js.action_sent",
         "js.timer_started",
         "js.timer_reset",
+        "js.confirm_timer_reset",
         "js.added_time_total",
         "js.added_time_taken",
         "js.duration_minute",

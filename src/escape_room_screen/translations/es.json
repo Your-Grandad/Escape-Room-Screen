@@ -1,4 +1,9 @@
 {
+  "stats.actions": "Acciones",
+  "stats.delete": "Eliminar",
+  "stats.confirm_delete": "¿Eliminar la entrada de {team} de la clasificación? Esta acción no se puede deshacer y actualizará las estadísticas de finalización.",
+  "timer.already_started": "El temporizador ya se ha iniciado. Restablécelo antes de iniciar una nueva sesión.",
+  "js.confirm_timer_reset": "Ya hay un temporizador de sala en curso. ¿Seguro que quieres restablecerlo? Esto detendrá la sesión actual.",
   "admin.dark_mode": "Modo oscuro",
   "admin.state_on": "Activado",
   "admin.state_off": "Desactivado",

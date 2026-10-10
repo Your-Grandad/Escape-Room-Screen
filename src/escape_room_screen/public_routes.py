@@ -7,23 +7,29 @@ def register_public_routes(app: Flask, runtime: DisplayRuntime) -> None:
     store = runtime.store
     broker = runtime.broker
 
+    def display_snapshot() -> dict[str, object]:
+        settings = store.get().to_dict()
+        latest = store.get_latest_result()
+        if latest is not None:
+            settings["latest_result"] = latest.to_dict()
+        return settings
+
     @app.get("/")
     def home() -> str:
         return render_template("home.html", settings=store.get())
 
     @app.get("/api/display")
     def get_display() -> Response:
-        settings = store.get().to_dict()
-        latest = store.get_latest_result()
-        if latest is not None:
-            settings["latest_result"] = latest.to_dict()
-        return jsonify(settings)
+        response = jsonify(display_snapshot())
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/api/gpio/activity")
     def get_gpio_activity() -> Response:
         paused, activity = store.get_gpio_activity()
         return jsonify(
             paused=paused,
+            interaction_active=not paused and store.get().timer_is_running,
             activity=[
                 {
                     "pin": entry.pin,
@@ -42,7 +48,7 @@ def register_public_routes(app: Flask, runtime: DisplayRuntime) -> None:
     @app.get("/events")
     def display_events() -> Response:
         return Response(
-            broker.stream(store.get()),
+            broker.stream(display_snapshot),
             mimetype="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
         )

@@ -55,6 +55,25 @@ class DisplaySettings:
             else self.timer_duration_seconds
         )
 
+    @property
+    def timer_is_running(self) -> bool:
+        if (
+            self.timer_started_at is None
+            or self.timer_paused_at is not None
+            or self.room_completed_at is not None
+            or self.room_failed_at is not None
+        ):
+            return False
+        started_at = datetime.fromisoformat(self.timer_started_at)
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        duration = (
+            self.timer_base_seconds
+            + self.extra_time_seconds
+            - self.penalty_time_seconds
+        )
+        return (datetime.now(timezone.utc) - started_at).total_seconds() < duration
+
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
@@ -291,7 +310,7 @@ class DisplaySettingsStore:
             )
             if result.rowcount == 0:
                 return None
-            connection.execute("DELETE FROM hints")
+            self._clear_session_hints(connection)
             connection.commit()
         return self.get()
 
@@ -563,6 +582,7 @@ class DisplaySettingsStore:
 
     @dataclass(frozen=True)
     class LeaderboardEntry:
+        id: int
         group_name: str
         group_size: int
         hints_used: int
@@ -585,7 +605,7 @@ class DisplaySettingsStore:
         with closing(connect(self.database_path)) as connection:
             rows = connection.execute(
                 """
-                SELECT group_name, group_size, hints_used, penalties,
+                SELECT id, group_name, group_size, hints_used, penalties,
                        time_taken_seconds, time_remaining_seconds, completed_at,
                        outcome
                 FROM room_results
@@ -600,6 +620,14 @@ class DisplaySettingsStore:
                 DisplaySettingsStore.LeaderboardEntry(**dict(row))
                 for row in rows
             ]
+
+    def delete_completion_result(self, result_id: int) -> bool:
+        with closing(connect(self.database_path)) as connection:
+            result = connection.execute(
+                "DELETE FROM room_results WHERE id = ?", (result_id,),
+            )
+            connection.commit()
+        return result.rowcount == 1
 
     def get_latest_result(self) -> CompletionResult | None:
         with closing(connect(self.database_path)) as connection:
@@ -1153,18 +1181,22 @@ class DisplaySettingsStore:
                 (started_at,),
             )
             if clear_hints:
-                connection.execute("DELETE FROM hints")
-                connection.execute(
-                    """
-                    UPDATE display_settings
-                    SET announcement = NULL, announcement_expires_at = NULL,
-                        announcement_media_type = NULL, announcement_media_filename = NULL,
-                        announcement_media_full_screen = 0
-                    WHERE id = 1
-                    """
-                )
+                self._clear_session_hints(connection)
             connection.commit()
         return self.get()
+
+    @staticmethod
+    def _clear_session_hints(connection: sqlite3.Connection) -> None:
+        connection.execute("DELETE FROM hints")
+        connection.execute(
+            """
+            UPDATE display_settings
+            SET announcement = NULL, announcement_expires_at = NULL,
+                announcement_media_type = NULL, announcement_media_filename = NULL,
+                announcement_media_full_screen = 0
+            WHERE id = 1
+            """
+        )
 
     @staticmethod
     def _validate_result_name(value: object) -> str:
