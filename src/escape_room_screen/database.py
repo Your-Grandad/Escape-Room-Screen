@@ -15,6 +15,13 @@ def initialize(database_path: Path | str) -> None:
     with closing(connect(database_path)) as connection:
         connection.executescript(
             """
+            CREATE TABLE IF NOT EXISTS hdmi_rotation (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                rotation INTEGER NOT NULL CHECK (rotation IN (0, 90, 180, 270))
+            );
+            INSERT INTO hdmi_rotation (id, rotation) VALUES (1, 0)
+            ON CONFLICT(id) DO NOTHING;
+
             CREATE TABLE IF NOT EXISTS display_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 title TEXT NOT NULL,
@@ -183,6 +190,7 @@ def initialize(database_path: Path | str) -> None:
             )
             connection.execute("DROP TABLE gpio_output_actions_legacy")
         for column in (
+            "screen_rotation INTEGER NOT NULL DEFAULT 0 CHECK (screen_rotation IN (0, 90, 180, 270))",
             "timer_started_at TEXT",
             "timer_paused_at TEXT",
             "timer_duration_seconds INTEGER NOT NULL DEFAULT 3600 CHECK (timer_duration_seconds > 0)",

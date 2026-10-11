@@ -40,6 +40,11 @@ const forceDefaultLayout = new URLSearchParams(window.location.search).get("layo
 let warnedAboutMissingLayout = false;
 
 function updateDisplay(settings) {
+  const rotation = settings.screen_rotation ?? 0;
+  if (![0, 90, 180, 270].includes(rotation)) {
+    console.warn("Invalid screen rotation; using normal orientation.", rotation);
+  }
+  document.body.dataset.screenRotation = String([0, 90, 180, 270].includes(rotation) ? rotation : 0);
   const briefingActive = mediaManager?.update(settings);
   if (window.ScreenLayout) {
     window.ScreenLayout.apply(document.body, settings, { forceDefault: forceDefaultLayout });

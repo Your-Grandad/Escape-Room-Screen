@@ -58,6 +58,7 @@ class DisplaySettings:
     media_settings_error: bool = False
     briefing_token: str | None = None
     briefing_filename: str | None = None
+    screen_rotation: int = 0
 
     @property
     def timer_base_seconds(self) -> int:
@@ -195,7 +196,7 @@ class DisplaySettingsStore:
             row = connection.execute(
                 """
                 SELECT
-                    title, message, background_colour, accent_colour, timer_started_at,
+                    title, message, background_colour, accent_colour, screen_rotation, timer_started_at,
                     timer_paused_at, timer_duration_seconds, timer_run_duration_seconds,
                     room_completed_at,
                     room_failed_at,
@@ -325,7 +326,7 @@ class DisplaySettingsStore:
                 SET title = ?, message = ?, background_colour = ?, accent_colour = ?,
                     background_image = ?, logo_image = ?,
                     completion_message = ?, failure_message = ?,
-                    timer_duration_seconds = ?,
+                    timer_duration_seconds = ?, screen_rotation = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = 1
                 """,
@@ -339,6 +340,7 @@ class DisplaySettingsStore:
                     settings.completion_message,
                     settings.failure_message,
                     settings.timer_duration_seconds,
+                    settings.screen_rotation,
                 ),
             )
             connection.commit()
@@ -1346,7 +1348,7 @@ class DisplaySettingsStore:
             "background_colour",
             "accent_colour",
         }
-        optional_fields = {"completion_message", "failure_message", "timer_duration_seconds"}
+        optional_fields = {"completion_message", "failure_message", "timer_duration_seconds", "screen_rotation"}
         if not required_fields.issubset(values) or not set(values).issubset(
             required_fields | optional_fields
         ):
@@ -1362,6 +1364,9 @@ class DisplaySettingsStore:
         )
         failure_message = values.get("failure_message", current.failure_message)
         timer_duration_seconds = values.get("timer_duration_seconds", current.timer_duration_seconds)
+        screen_rotation = values.get("screen_rotation", current.screen_rotation)
+        if type(screen_rotation) is not int or screen_rotation not in (0, 90, 180, 270):
+            raise ValueError("Screen rotation must be 0, 90, 180 or 270 degrees.")
         if (
             not isinstance(timer_duration_seconds, int)
             or isinstance(timer_duration_seconds, bool)
@@ -1410,6 +1415,7 @@ class DisplaySettingsStore:
             completion_message=completion_message.strip(),
             failure_message=failure_message.strip(),
             timer_duration_seconds=timer_duration_seconds,
+            screen_rotation=screen_rotation,
         )
 
     @staticmethod

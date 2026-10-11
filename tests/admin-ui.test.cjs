@@ -374,7 +374,7 @@ function homeTimerFixture(duration, now = startedMilliseconds + 600000) {
     document: {
       querySelector: getElement,
       addEventListener(name, handler) { documentEvents.set(name, handler); },
-      body: { style: { setProperty() {} }, classList: { add() {}, remove() {}, toggle() {} } },
+      body: { dataset: {}, style: { setProperty() {} }, classList: { add() {}, remove() {}, toggle() {} } },
     },
     Date: class extends Date {
       constructor(...args) { super(...(args.length ? args : [clock])); }
@@ -405,6 +405,7 @@ function homeTimerFixture(duration, now = startedMilliseconds + 600000) {
     announcement: getElement("#announcement"),
     announcementMessage: getElement("#announcement-message"),
     requests, warnings, intervals, timeouts,
+    get rotation() { return context.document.body.dataset.screenRotation; },
     get updates() { return updates; },
     update(settings) {
       context.settings = settings;
@@ -427,6 +428,19 @@ test("room display starts at the saved duration before live updates arrive", () 
   const home = homeTimerFixture(5415);
   home.tick();
   assert.equal(home.timer.textContent, "90:15");
+});
+
+test("player rotation follows live snapshots and rejects unsupported orientations", () => {
+  const home = homeTimerFixture(3600);
+  for (const rotation of [0, 90, 180, 270, 0]) {
+    home.update({ ...runningDisplay, screen_rotation: rotation });
+    assert.equal(home.rotation, String(rotation));
+  }
+  home.update(runningDisplay);
+  assert.equal(home.rotation, "0");
+  home.update({ ...runningDisplay, screen_rotation: 45 });
+  assert.equal(home.rotation, "0");
+  assert(home.warnings.some(args => args[0].includes("Invalid screen rotation")));
 });
 
 test("room display retains current run duration and picks up the next idle duration", () => {

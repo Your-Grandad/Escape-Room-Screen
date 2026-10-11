@@ -3,7 +3,7 @@
 }
 
 .home-screen.custom-layout:not(.room-complete):not(.room-failed) {
-  height: 100vh;
+  height: var(--screen-height, 100vh);
   overflow: hidden;
   position: relative;
 }

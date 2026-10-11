@@ -1,4 +1,5 @@
 import secrets
+import sqlite3
 import subprocess
 import re
 from datetime import timedelta
@@ -133,6 +134,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         context: dict[str, Any] = {
             "settings": store.get(),
             "csrf_token": csrf_token(),
+            "hdmi_rotation": app.extensions["display_rotation"],
         }
         if error is not None:
             context["error"] = error
@@ -314,6 +316,11 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                 for name in ("completion_message", "failure_message"):
                     if name in request.form:
                         display_values[name] = request.form[name]
+                if "screen_rotation" in request.form:
+                    rotation = request.form["screen_rotation"]
+                    if rotation not in ("0", "90", "180", "270"):
+                        raise ValueError(translate(g.locale, "settings.rotation_invalid"))
+                    display_values["screen_rotation"] = int(rotation)
                 duration_fields = ("timer_hours", "timer_minutes", "timer_seconds")
                 if any(name in request.form for name in duration_fields):
                     display_values["timer_duration_seconds"] = store.parse_timer_duration(
@@ -811,6 +818,34 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         if request.is_json:
             return jsonify(paused=is_paused)
         return redirect(url_for("gpio_settings"))
+
+    @app.post("/admin/display/rotation")
+    def rotate_hdmi_display() -> str | Response | tuple[str, int] | tuple[Response, int]:
+        require_admin()
+        require_csrf()
+        values = request_values()
+        raw_rotation = values.get("rotation") if values else None
+        if type(raw_rotation) is int and raw_rotation in (0, 90, 180, 270):
+            rotation = raw_rotation
+        elif isinstance(raw_rotation, str) and raw_rotation in ("0", "90", "180", "270"):
+            rotation = int(raw_rotation)
+        else:
+            error = translate(g.locale, "settings.rotation_invalid")
+            if request.is_json:
+                return jsonify(error=error), 400
+            return render_settings_page(error=error), 400
+        try:
+            app.extensions["display_rotation"].apply(rotation)
+        except (RuntimeError, OSError, subprocess.SubprocessError, sqlite3.Error):
+            app.logger.exception("Failed to apply HDMI display rotation")
+            error = translate(g.locale, "settings.hdmi_rotation_failed")
+            if request.is_json:
+                return jsonify(error=error), 503
+            return render_settings_page(error=error), 503
+        runtime.record_action("display", f"Set HDMI rotation to {rotation} degrees")
+        if request.is_json:
+            return jsonify(hdmi_rotation=rotation)
+        return redirect(url_for("settings"))
 
     @app.post("/admin/display/toggle")
     def toggle_display_power() -> Response:

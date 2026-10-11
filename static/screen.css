@@ -11,14 +11,47 @@ body {
   margin: 0;
 }
 
+html.player-screen {
+  background: #000;
+  overflow: hidden;
+}
+
 .home-screen {
+  --screen-width-unit: 1vw;
+  --screen-height-unit: 1vh;
+  --screen-width: 100vw;
+  --screen-height: 100vh;
   background-color: var(--background-colour);
   background-image: var(--background-image);
   background-position: center;
   background-size: cover;
   display: flex;
-  min-height: 100vh;
+  min-height: var(--screen-height);
   text-align: center;
+}
+
+.home-screen[data-screen-rotation="90"],
+.home-screen[data-screen-rotation="270"] {
+  --screen-width-unit: 1vh;
+  --screen-height-unit: 1vw;
+  --screen-width: 100vh;
+  --screen-height: 100vw;
+}
+
+.home-screen[data-screen-rotation="90"] { --screen-rotation: 90deg; }
+.home-screen[data-screen-rotation="180"] { --screen-rotation: 180deg; }
+.home-screen[data-screen-rotation="270"] { --screen-rotation: 270deg; }
+
+.home-screen[data-screen-rotation="90"],
+.home-screen[data-screen-rotation="180"],
+.home-screen[data-screen-rotation="270"] {
+  height: var(--screen-height);
+  left: 50%;
+  overflow: hidden;
+  position: fixed !important;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(var(--screen-rotation));
+  width: var(--screen-width);
 }
 
 .home-screen.room-complete {
@@ -131,19 +164,19 @@ body {
 
 .home-screen.room-complete #message,
 .home-screen.room-failed #message {
-  font-size: clamp(3rem, 8vw, 8rem);
+  font-size: clamp(3rem, calc(8 * var(--screen-width-unit)), 8rem);
   font-weight: 800;
   left: 50%;
   margin: 0;
   position: absolute;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 90vw;
+  width: calc(90 * var(--screen-width-unit));
 }
 
 .home-screen main {
   margin: 0 auto;
-  max-width: 90vw;
+  max-width: calc(90 * var(--screen-width-unit));
   padding: 2rem;
   position: relative;
   width: 100%;
@@ -151,19 +184,19 @@ body {
 
 .home-screen h1 {
   color: var(--accent-colour);
-  font-size: clamp(3rem, 10vw, 10rem);
+  font-size: clamp(3rem, calc(10 * var(--screen-width-unit)), 10rem);
   left: 50%;
   margin: 0;
   position: absolute;
   top: 2rem;
   transform: translateX(-50%);
-  width: 90vw;
+  width: calc(90 * var(--screen-width-unit));
 }
 
 .home-logo {
   left: 1.5rem;
-  max-height: 14vh;
-  max-width: min(16vw, 18rem);
+  max-height: calc(14 * var(--screen-height-unit, 1vh));
+  max-width: min(calc(16 * var(--screen-width-unit, 1vw)), 18rem);
   object-fit: contain;
   position: absolute;
   top: 1rem;
@@ -174,22 +207,22 @@ body {
 }
 
 .home-screen.has-logo h1 {
-  width: 65vw;
+  width: calc(65 * var(--screen-width-unit));
 }
 
 .home-screen p {
-  font-size: clamp(1.5rem, 4vw, 4rem);
+  font-size: clamp(1.5rem, calc(4 * var(--screen-width-unit)), 4rem);
   margin: 1rem 0 0;
   white-space: pre-wrap;
 }
 
 #message {
-  margin-top: clamp(12rem, 28vh, 24rem);
+  margin-top: clamp(12rem, calc(28 * var(--screen-height-unit, 1vh)), 24rem);
 }
 
 #timer {
   color: var(--accent-colour);
-  font-size: clamp(4rem, 12vw, 12rem);
+  font-size: clamp(4rem, calc(12 * var(--screen-width-unit, 1vw)), 12rem);
   font-variant-numeric: tabular-nums;
   font-weight: 800;
 }
@@ -199,7 +232,7 @@ body {
   bottom: 2rem;
   color: var(--accent-colour);
   left: 50%;
-  max-width: min(90vw, 60rem);
+  max-width: min(calc(90 * var(--screen-width-unit, 1vw)), 60rem);
   padding: 1rem 2rem;
   position: fixed;
   text-align: center;
@@ -207,7 +240,7 @@ body {
 }
 
 .announcement p {
-  font-size: clamp(1.5rem, 3vw, 3rem);
+  font-size: clamp(1.5rem, calc(3 * var(--screen-width-unit, 1vw)), 3rem);
   font-weight: 800;
   margin: 0;
   white-space: pre-wrap;
@@ -218,17 +251,17 @@ body {
   border-radius: .5rem;
   display: block;
   margin: .75rem auto 0;
-  max-height: 50vh;
+  max-height: calc(50 * var(--screen-height-unit, 1vh));
   max-width: 100%;
   object-fit: contain;
-  margin-bottom: 20vh;
+  margin-bottom: calc(20 * var(--screen-height-unit, 1vh));
 }
 
 .announcement audio:not([hidden]) {
   border-radius: .5rem;
   display: block;
   margin: .75rem auto 0;
-  max-height: 30vh;
+  max-height: calc(30 * var(--screen-height-unit, 1vh));
   max-width: 100%;
   object-fit: contain;
 }
@@ -257,8 +290,8 @@ body {
 
 .announcement.full-screen img:not([hidden]),
 .announcement.full-screen video:not([hidden]) {
-  max-height: 80vh;
-  max-width: 90vw;
+  max-height: calc(80 * var(--screen-height-unit, 1vh));
+  max-width: calc(90 * var(--screen-width-unit, 1vw));
 }
 
 .announcement[hidden] {

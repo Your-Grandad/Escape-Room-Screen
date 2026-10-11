@@ -345,6 +345,62 @@ sudo chown kiosk:kiosk /home/kiosk/.xinitrc
 sudo chmod 0755 /home/kiosk/.xinitrc
 ```
 
+### HDMI rotation for an upside-down monitor
+
+The app can rotate the whole X11 desktop, including Chromium, without rebooting.
+This is separate from the player-page rotation setting. Leave that page setting
+at **0 - Normal** when using HDMI rotation to avoid rotating twice.
+
+First identify the connected output (do not assume every Pi uses `HDMI-1`):
+
+```bash
+sudo -u kiosk DISPLAY=:0 XAUTHORITY=/home/kiosk/.Xauthority xrandr --query
+```
+
+For the `HDMI-1` example, add these lines to the existing
+`/etc/escape-room-screen/environment` file, preserving its signing key, password
+and other settings:
+
+```ini
+DISPLAY=:0
+XAUTHORITY=/home/kiosk/.Xauthority
+HDMI_ROTATION_OUTPUT=HDMI-1
+```
+
+The web service and X11 session must run as the same `kiosk` user, as in this
+guide. Keep X11 authentication enabled; do not use `xhost +`. If your X session
+uses a different authority file, use its actual path. This feature requires
+X11 and `xrandr` (provided by `x11-xserver-utils`); it does not control Wayland.
+The output must advertise normal/left/inverted/right rotation support.
+
+Restart the web service, then open **Settings > Customisation > Raspberry Pi
+HDMI rotation**, choose **180 - Upside down**, and click **Apply and save HDMI
+rotation**. To restore normal orientation choose **0 - Normal**.
+
+```bash
+sudo systemctl restart escape-room-screen.service
+```
+
+To restore the saved orientation after reboot or an X11 restart, insert this
+command in the existing `/home/kiosk/.xinitrc` **after** the `until curl ... done`
+readiness loop and **before** `exec /usr/bin/chromium`:
+
+```bash
+cd /home/kiosk/escape-room-screen
+/home/kiosk/.local/bin/poetry run python -m escape_room_screen.display_rotation \
+  --database /home/kiosk/escape-room-screen/src/instance/home_screen.db \
+  --output HDMI-1 || printf '%s\n' 'HDMI rotation restore failed; check the X11 output and database.' >&2
+```
+
+Use the configured database path if you override `DATABASE`, and replace the
+output with the name you verified. The database must have been initialized by
+the app before this command runs. An unsuccessful restore prints an error and
+does not prevent Chromium starting. Existing kiosk sessions need a restart to
+load the new startup command; the admin rotation itself takes effect immediately.
+Rotation affects only the selected output, not other HDMI monitors, and does not
+remap touchscreen coordinates. If X11 is not running or permissions are wrong,
+the admin page reports an error rather than saving a successful-looking setting.
+
 Make the kiosk user start X11 when it automatically logs in to the first
 console:
 

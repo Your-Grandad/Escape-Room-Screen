@@ -691,6 +691,66 @@ class HomeScreenTests(unittest.TestCase):
         settings_page.close()
         home_script.close()
 
+    def test_screen_rotation_saves_all_orientations_and_publishes_persisted_settings(self) -> None:
+        csrf = self.login()
+        store = self.app.extensions["display_store"]
+        self.assertEqual(store.get().screen_rotation, 0)
+        store.start_timer()
+        timer_started = store.get().timer_started_at
+        runtime = self.app.extensions["display_runtime"]
+        for rotation in (0, 90, 180, 270, 0):
+            with self.subTest(rotation=rotation):
+                data = {**self.display_settings_values(), "csrf_token": csrf, "screen_rotation": str(rotation)}
+                published = []
+                with patch.object(
+                    runtime, "publish_current_settings",
+                    side_effect=lambda: published.append(store.get().screen_rotation),
+                ):
+                    response = self.client.post("/admin/settings", data=data)
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(published, [rotation])
+                self.assertEqual(self.client.get("/api/display").get_json()["screen_rotation"], rotation)
+                self.assertEqual(DisplaySettingsStore(self.database_path).get().screen_rotation, rotation)
+                self.assertEqual(store.get().timer_started_at, timer_started)
+                page = self.client.get("/admin/settings")
+                self.assertIn(f'<option value="{rotation}" selected>'.encode(), page.data)
+                for path in ("/", "/?preview=1", "/?layout=default&media=default"):
+                    self.assertIn(
+                        f'data-screen-rotation="{rotation}"'.encode(),
+                        self.client.get(path).data,
+                    )
+                self.assertNotIn(b"data-screen-rotation=", page.data)
+        store.update({**self.display_settings_values(), "screen_rotation": 90})
+        initialize(self.database_path)
+        initialize(self.database_path)
+        self.client.post("/admin/settings", data={**self.display_settings_values(), "csrf_token": csrf})
+        self.assertEqual(store.get().screen_rotation, 90)
+
+    def test_screen_rotation_rejects_invalid_values_without_changing_settings(self) -> None:
+        csrf = self.login()
+        store = self.app.extensions["display_store"]
+        before = store.get()
+        for rotation in ("45", "-90", "360", "90.0", "", "true", "90deg"):
+            with self.subTest(rotation=rotation):
+                response = self.client.post(
+                    "/admin/settings",
+                    data={**self.display_settings_values(), "csrf_token": csrf, "screen_rotation": rotation},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(b"Screen rotation must be", response.data)
+                self.assertEqual(store.get(), before)
+        for rotation in (True, 90.0, "90", None, 45):
+            with self.subTest(store_rotation=rotation), self.assertRaises(ValueError):
+                store.update({**self.display_settings_values(), "screen_rotation": rotation})
+        self.assertEqual(store.get(), before)
+
+    def test_screen_rotation_requires_login_and_csrf(self) -> None:
+        data = {**self.display_settings_values(), "screen_rotation": "180"}
+        self.assertEqual(self.client.post("/admin/settings", data=data).status_code, 401)
+        self.login()
+        self.assertEqual(self.client.post("/admin/settings", data=data).status_code, 400)
+        self.assertEqual(self.app.extensions["display_store"].get().screen_rotation, 0)
+
     def test_logged_out_admin_pages_redirect_to_login(self) -> None:
         for path in ("/admin", "/admin/settings", "/admin/stats"):
             with self.subTest(path=path):

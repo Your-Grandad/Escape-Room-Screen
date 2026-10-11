@@ -82,6 +82,23 @@ not on the player screen.
 
 ### Screen layout editor
 
+For a sideways or upside-down TV, choose **Settings > Customisation >
+Screen rotation** (0, 90, 180 or 270 degrees), then save. The player screen and
+live preview rotate immediately, including backgrounds, hints, briefings and
+end screens; staff pages and the Pi desktop remain unchanged. Quarter-turns
+swap the screen's logical width and height. Choose **0 - Normal** to restore.
+The setting persists across restarts and also works with the original layout.
+
+To rotate the **entire Raspberry Pi desktop and Chromium**, rather than just
+the page, use the separate **Raspberry Pi HDMI rotation** controls on that same
+settings page. Choose **180 - Upside down** for an inverted monitor. This requires
+the X11 setup in the deployment guide's **HDMI rotation** section; it is disabled
+until `HDMI_ROTATION_OUTPUT`, `DISPLAY` and `xrandr` are available.
+Keep player-page rotation at **0 - Normal** to avoid double rotation. HDMI
+orientation is stored separately in SQLite and restored by the kiosk startup
+command. Remote staff browsers do not rotate. Wayland and touchscreen input
+remapping are not supported by this control.
+
 Open **Settings > Screen editor** (`/admin/screen-layout`) to drag and resize
 the header, message, logo, timer, and hint area. Select a block to edit its
 percentage position and size, font size, alignment, and visibility. The yellow

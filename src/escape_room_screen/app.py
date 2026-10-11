@@ -9,6 +9,7 @@ from .admin_routes import register_admin_routes
 from .database import initialize
 from .display import DisplaySettingsStore
 from .display_power import DisplayPowerController
+from .display_rotation import DisplayRotationController
 from .events import DisplayUpdateBroker
 from .gpio import GpioController
 from .localization import register_localization
@@ -51,6 +52,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         HIDE_DONATIONS=os.environ.get("HIDE_DONATIONS", "false").strip().lower() == "true",
         DISABLE_CUSTOM_LAYOUT=os.environ.get("DISABLE_CUSTOM_LAYOUT", "false").strip().lower() == "true",
         DISABLE_SCREEN_MEDIA=os.environ.get("DISABLE_SCREEN_MEDIA", "false").strip().lower() == "true",
+        HDMI_ROTATION_OUTPUT=os.environ.get("HDMI_ROTATION_OUTPUT", ""),
         SUPPORTED_LOCALES=("en", "es"),
         LOCALE_NAMES={"en": "English", "es": "Español"},
     )
@@ -74,6 +76,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.extensions["display_broker"] = broker
     app.extensions["gpio"] = gpio
     app.extensions["display_power"] = display_power
+    app.extensions["display_rotation"] = DisplayRotationController(
+        database_path, app.config["HDMI_ROTATION_OUTPUT"]
+    )
     runtime = DisplayRuntime(
         app=app,
         store=store,

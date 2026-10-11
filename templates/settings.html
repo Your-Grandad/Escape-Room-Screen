@@ -36,6 +36,14 @@
           </div>
           <section class="utility-section settings-appearance">
             <h2>{{ t("settings.appearance_section") }}</h2>
+            <label>{{ t("settings.screen_rotation") }}
+              <select name="screen_rotation" aria-describedby="screen-rotation-help">
+                {% for rotation in (0, 90, 180, 270) %}
+                  <option value="{{ rotation }}"{% if settings.screen_rotation == rotation %} selected{% endif %}>{{ t("settings.rotation_" ~ rotation) }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <p id="screen-rotation-help">{{ t("settings.rotation_help") }}</p>
             <fieldset class="colour-control">
               <legend>{{ t("settings.background_colour") }}</legend>
               <input id="background-picker" type="color" value="{{ settings.background_colour }}" aria-label="{{ t('settings.background_colour') }}">
@@ -84,6 +92,23 @@
           <button type="submit">{{ t("settings.save") }}</button>
         </div>
       </form>
+      <section class="utility-section">
+        <h2>{{ t("settings.hdmi_rotation") }}</h2>
+        <p>{{ t("settings.hdmi_rotation_help") }}</p>
+        {% if not hdmi_rotation.available %}<p>{{ t("settings.hdmi_rotation_unavailable") }}</p>{% endif %}
+        <form action="{{ url_for('rotate_hdmi_display') }}" method="post">
+          <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+          <label>{{ t("settings.hdmi_rotation") }}
+            {% set saved_hdmi_rotation = hdmi_rotation.saved_rotation %}
+            <select name="rotation"{% if not hdmi_rotation.available %} disabled{% endif %}>
+              {% for rotation in (0, 90, 180, 270) %}
+                <option value="{{ rotation }}"{% if saved_hdmi_rotation == rotation %} selected{% endif %}>{{ t("settings.rotation_" ~ rotation) }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button type="submit"{% if not hdmi_rotation.available %} disabled{% endif %}>{{ t("settings.hdmi_rotation_apply") }}</button>
+        </form>
+      </section>
       <form class="account-settings" action="{{ url_for('change_admin_password') }}" method="post">
         <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
         <fieldset>
