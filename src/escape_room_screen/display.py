@@ -174,6 +174,7 @@ class GpioOutputAction:
     pin: int | None
     state: str
     duration_seconds: int | None = None
+    trigger: str = "manual"
 
     @property
     def label(self) -> str:
@@ -1137,7 +1138,7 @@ class DisplaySettingsStore:
         with closing(connect(self.database_path)) as connection:
             rows = connection.execute(
                 """
-                SELECT id, title, output_name, pin, state, duration_seconds
+                SELECT id, title, output_name, pin, state, duration_seconds, trigger
                 FROM gpio_output_actions
                 ORDER BY id
                 """
@@ -1148,7 +1149,7 @@ class DisplaySettingsStore:
         with closing(connect(self.database_path)) as connection:
             row = connection.execute(
                 """
-                SELECT id, title, output_name, pin, state, duration_seconds
+                SELECT id, title, output_name, pin, state, duration_seconds, trigger
                 FROM gpio_output_actions
                 WHERE id = ?
                 """,
@@ -1163,20 +1164,22 @@ class DisplaySettingsStore:
         state: object,
         configured_outputs: list[str],
         duration_seconds: object = None,
+        trigger: object = "manual",
     ) -> GpioOutputAction:
         if not isinstance(label, str) or not label.strip() or len(label.strip()) > MAX_TITLE_LENGTH:
             raise ValueError("Button name must contain 1 to 80 characters.")
         if not isinstance(output_name, str) or output_name not in configured_outputs:
             raise ValueError("Choose a configured GPIO output.")
         duration = validate_output_signal(state, duration_seconds)
+        validated_trigger = self._validate_gpio_output_trigger(trigger)
         with closing(connect(self.database_path)) as connection:
             try:
                 result = connection.execute(
                     """
-                    INSERT INTO gpio_output_actions (title, output_name, state, duration_seconds)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO gpio_output_actions (title, output_name, state, duration_seconds, trigger)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (label.strip(), output_name, state, duration),
+                    (label.strip(), output_name, state, duration, validated_trigger),
                 )
             except sqlite3.IntegrityError as error:
                 raise ValueError("An extra button already has that name.") from error
@@ -1191,12 +1194,14 @@ class DisplaySettingsStore:
         pin: object,
         state: object,
         duration_seconds: object = None,
+        trigger: object = "manual",
     ) -> GpioOutputAction:
         if not isinstance(title, str) or not title.strip() or len(title.strip()) > MAX_TITLE_LENGTH:
             raise ValueError("Event title must contain 1 to 80 characters.")
         if not isinstance(pin, str) or not pin.isdecimal() or not 0 <= int(pin) <= 27:
             raise ValueError("GPIO pin must be a BCM pin number from 0 to 27.")
         duration = validate_output_signal(state, duration_seconds)
+        validated_trigger = self._validate_gpio_output_trigger(trigger)
         pin_number = int(pin)
         with closing(connect(self.database_path)) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -1209,10 +1214,10 @@ class DisplaySettingsStore:
             try:
                 result = connection.execute(
                     """
-                    INSERT INTO gpio_output_actions (title, pin, state, duration_seconds)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO gpio_output_actions (title, pin, state, duration_seconds, trigger)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (title.strip(), pin_number, state, duration),
+                    (title.strip(), pin_number, state, duration, validated_trigger),
                 )
             except sqlite3.IntegrityError as error:
                 raise ValueError("An extra button already has that name.") from error
@@ -1220,6 +1225,22 @@ class DisplaySettingsStore:
         action = self.get_gpio_output_action(result.lastrowid)
         assert action is not None
         return action
+
+    @staticmethod
+    def _validate_gpio_output_trigger(trigger: object) -> str:
+        if not isinstance(trigger, str) or trigger not in ("manual", "room-complete"):
+            raise ValueError("Choose when the GPIO output action runs.")
+        return trigger
+
+    def set_gpio_output_action_trigger(self, action_id: int, trigger: object) -> bool:
+        validated_trigger = self._validate_gpio_output_trigger(trigger)
+        with closing(connect(self.database_path)) as connection:
+            result = connection.execute(
+                "UPDATE gpio_output_actions SET trigger = ? WHERE id = ?",
+                (validated_trigger, action_id),
+            )
+            connection.commit()
+        return result.rowcount == 1
 
     def has_gpio_trigger_event_for_pin(self, pin: int) -> bool:
         with closing(connect(self.database_path)) as connection:

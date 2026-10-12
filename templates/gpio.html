@@ -36,6 +36,12 @@
         <option value="timed">{{ t("gpio.signal_timed") }}</option>
       </select>
     </label>
+    <label>{{ t("gpio.when") }}
+      <select name="trigger">
+        <option value="manual">{{ t("gpio.trigger_manual") }}</option>
+        <option value="room-complete">{{ t("gpio.trigger_room_complete") }}</option>
+      </select>
+    </label>
     <label id="output-duration-label" hidden>{{ t("gpio.duration_seconds") }} <input name="duration_seconds" id="output-duration" type="number" min="1" step="1" value="1" disabled></label>
     </div>
     <div class="form-actions">
@@ -47,6 +53,16 @@
       <li>
         {% if action.pin is not none %}{% set target = "BCM " ~ action.pin %}{% else %}{% set target = action.output_name ~ " (BCM " ~ gpio_output_pins[action.output_name] ~ ")" %}{% endif %}
         <span>{{ t("gpio.action_target", label=action.title, output=target, state=t("gpio.signal_" + action.state)) }}{% if action.duration_seconds is not none %} — {{ t("gpio.duration_value", seconds=action.duration_seconds) }}{% endif %}</span>
+        <form action="{{ url_for('set_gpio_output_action_trigger', action_id=action.id) }}" method="post">
+          <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+          <label>{{ t("gpio.when") }}
+            <select name="trigger">
+              <option value="manual" {% if action.trigger == "manual" %}selected{% endif %}>{{ t("gpio.trigger_manual") }}</option>
+              <option value="room-complete" {% if action.trigger == "room-complete" %}selected{% endif %}>{{ t("gpio.trigger_room_complete") }}</option>
+            </select>
+          </label>
+          <button type="submit">{{ t("gpio.save_trigger") }}</button>
+        </form>
         <form action="{{ url_for('delete_gpio_output_action', action_id=action.id) }}" method="post">
           <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
           <button class="icon-button danger" type="submit" aria-label="{{ t("gpio.delete_action") }}" title="{{ t("gpio.delete_action") }}">

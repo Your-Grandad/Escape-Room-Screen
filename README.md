@@ -325,6 +325,18 @@ button for a direct pin releases it and cancels its countdown. Keep output
 pins separate from input mappings and `GPIO_OUTPUTS` assignments; the latter
 already have dedicated On/Off controls.
 
+To run an output action automatically on successful completion, set **When**
+to **When room completed**. Existing actions default to **Button click only**;
+change their **When** dropdown and click **Save trigger** without recreating them.
+For example, leave BCM 23 linked to the **Complete room** input and set output
+actions on BCM 9 and BCM 16 to **Toggle / When room completed**.
+Both outputs then toggle when the input completes a running room, or when staff
+use **Complete room** in `/admin`. Automatic completion actions run once per
+completion, not on failure, timer expiry, or reset. Extra buttons still work
+manually. A failed output is logged in the action history without preventing
+the remaining outputs or undoing completion; the admin completion request
+also reports the failure.
+
 To configure a room-complete input before opening the admin page, set
 `GPIO_INPUTS` with the event name and BCM pin:
 

@@ -759,6 +759,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                     request.form.get("state"),
                     gpio.output_names(),
                     request.form.get("duration_seconds"),
+                    request.form.get("trigger", "manual"),
                 )
             else:
                 raw_pin = request.form.get("pin")
@@ -785,6 +786,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                     raw_pin,
                     request.form.get("state"),
                     request.form.get("duration_seconds"),
+                    request.form.get("trigger", "manual"),
                 )
         except ValueError as error:
             return render_gpio_page(str(error)), 400
@@ -792,6 +794,24 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             "gpio",
             f"Created trigger event '{action.title}' for "
             f"{action.output_name or f'BCM {action.pin}'} ({action.state})",
+        )
+        return redirect(url_for("gpio_settings"))
+
+    @app.post("/admin/gpio/actions/<int:action_id>/trigger-setting")
+    def set_gpio_output_action_trigger(action_id: int) -> Response:
+        require_admin()
+        require_csrf()
+        try:
+            updated = store.set_gpio_output_action_trigger(
+                action_id, request.form.get("trigger"),
+            )
+        except ValueError as error:
+            return render_gpio_page(str(error)), 400
+        if not updated:
+            abort(404)
+        runtime.record_action(
+            "gpio",
+            f"Set GPIO output action {action_id} trigger={request.form.get('trigger')}",
         )
         return redirect(url_for("gpio_settings"))
 
@@ -969,12 +989,15 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         require_admin()
         require_csrf()
         try:
-            settings = store.complete_room()
+            settings, failed_actions = runtime.complete_room()
         except ValueError as error:
             return jsonify(error=str(error)), 409
-        runtime.record_action("room", "Completed room")
-        runtime.publish_current_settings()
-        runtime.cancel_timer_events()
+        if failed_actions:
+            return jsonify(
+                error="Room completed, but one or more GPIO output actions failed.",
+                failed_actions=failed_actions,
+                settings=settings.to_dict(),
+            ), 503
         if request.form:
             return redirect(url_for("admin"))
         return jsonify(settings.to_dict())
@@ -1097,12 +1120,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         if action is None:
             abort(404)
         try:
-            if action.pin is not None:
-                is_on = gpio.send_signal(action.pin, action.state, action.duration_seconds)
-            elif action.output_name is None or action.output_name not in gpio.output_names():
-                abort(404)
-            else:
-                is_on = gpio.send_signal(action.output_name, action.state, action.duration_seconds)
+            is_on = runtime.trigger_gpio_output_action(action)
         except KeyError:
             abort(404)
         except ValueError as error:
@@ -1113,13 +1131,6 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         except (OSError, GPIOZeroError):
             app.logger.exception("Failed to trigger GPIO output action %s.", action_id)
             return jsonify(error="Failed to control GPIO output."), 503
-        runtime.record_action(
-            "gpio",
-            f"Triggered extra GPIO button '{action.title}' for "
-            f"{action.output_name or f'BCM {action.pin}'} "
-            f"({'on' if is_on else 'off'}; signal={action.state}"
-            f"{f'; duration={action.duration_seconds}s' if action.duration_seconds else ''})",
-        )
         response: dict[str, object] = dict(
             action_id=action.id,
             label=action.title,

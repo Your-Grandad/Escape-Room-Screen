@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta, timezone
 import subprocess
-from threading import Timer
+from threading import Lock, Timer
 
 from flask import Flask
+from gpiozero.exc import GPIOZeroError
 
 from .display import (
+    GpioOutputAction,
     DisplaySettings,
     DisplaySettingsStore,
 )
@@ -31,6 +33,7 @@ class DisplayRuntime:
         self._configured_gpio_inputs = configured_gpio_inputs
         self._auto_hint_timer: Timer | None = None
         self._auto_fail_timer: Timer | None = None
+        self._completion_lock = Lock()
 
     def initialize(self) -> None:
         self._clear_expired_announcement()
@@ -45,6 +48,48 @@ class DisplayRuntime:
             self.store.record_action(action_type, description)
         except Exception:
             self.app.logger.exception("Failed to record action")
+
+    def trigger_gpio_output_action(self, action: GpioOutputAction) -> bool:
+        target = action.pin if action.pin is not None else action.output_name
+        if target is None:
+            raise ValueError("GPIO output action has no target.")
+        is_on = self.gpio.send_signal(target, action.state, action.duration_seconds)
+        self.record_action(
+            "gpio",
+            f"Triggered extra GPIO button '{action.title}' for "
+            f"{action.output_name or f'BCM {action.pin}'} "
+            f"({'on' if is_on else 'off'}; signal={action.state}"
+            f"{f'; duration={action.duration_seconds}s' if action.duration_seconds else ''})",
+        )
+        return is_on
+
+    def complete_room(self) -> tuple[DisplaySettings, list[str]]:
+        with self._completion_lock:
+            settings = self.store.get()
+            if settings.room_completed_at is not None:
+                return settings, []
+            settings = self.store.complete_room()
+            self.cancel_timer_events()
+            self.record_action("room", "Completed room")
+            failed_actions: list[str] = []
+            for action in self.store.get_gpio_output_actions():
+                if action.trigger != "room-complete":
+                    continue
+                try:
+                    self.trigger_gpio_output_action(action)
+                except (KeyError, ValueError, RuntimeError, OSError, GPIOZeroError):
+                    failed_actions.append(action.title)
+                    self.app.logger.exception(
+                        "Room completed, but GPIO output action %s (%s) failed.",
+                        action.id, action.title,
+                    )
+                    self.record_action(
+                        "gpio",
+                        f"FAILED room-complete GPIO action '{action.title}' for "
+                        f"{action.output_name or f'BCM {action.pin}'}",
+                    )
+            self.publish_current_settings()
+            return settings, failed_actions
 
     def configure_gpio_inputs(self) -> None:
         inputs = self.gpio_inputs()
@@ -77,8 +122,7 @@ class DisplayRuntime:
                 self._handle_legacy_gpio_event(pin, event)
                 return
             if mapping.event == "complete-room":
-                self.store.complete_room()
-                self.publish_current_settings()
+                self.complete_room()
                 self.store.record_gpio_event(pin, mapping.event, accepted=True)
                 return
             if mapping.event == "start-timer":
@@ -214,8 +258,7 @@ class DisplayRuntime:
             if event == "display-toggle":
                 self.toggle_display_power(pin)
             return
-        self.store.complete_room()
-        self.publish_current_settings()
+        self.complete_room()
         self.store.record_gpio_event(pin, event, accepted=True)
 
     def toggle_display_power(self, pin: int | None = None) -> bool:

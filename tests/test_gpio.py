@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from threading import TIMEOUT_MAX
@@ -162,9 +163,10 @@ class GpioSignalRouteTests(unittest.TestCase):
             "DATABASE": str(self.database),
             "UPLOAD_FOLDER": str(Path(self.directory.name) / "uploads"),
             "GPIO_OUTPUTS": {"light": 17},
-            "GPIO_INPUTS": {},
+            "GPIO_INPUTS": {"complete-room": 23},
         })
         self.addCleanup(self.app.extensions["gpio"].close)
+        self.addCleanup(self.app.extensions["display_runtime"].cancel_timer_events)
         self.store = self.app.extensions["display_store"]
         self.client = self.app.test_client()
         self.client.post("/admin/login", data={"username": "admin", "password": "test-password"})
@@ -292,6 +294,225 @@ class GpioSignalRouteTests(unittest.TestCase):
             response = self.trigger(action_id)
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.get_json(), {"error": "Failed to control GPIO output."})
+
+    def test_admin_completion_toggles_bcm_9_and_16_once_per_room(self) -> None:
+        for pin in (9, 16):
+            self.create_action(
+                f"Finish light {pin}", "toggle", pin=str(pin), trigger="room-complete",
+            )
+        manual_id = self.create_action("Manual only", "toggle")
+        self.store.start_timer()
+        for _ in range(2):
+            response = self.client.post(
+                "/admin/complete", headers={"X-CSRF-Token": self.csrf},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertIsNotNone(response.get_json()["room_completed_at"])
+            self.assertTrue(self.factory.pin(9).state)
+            self.assertTrue(self.factory.pin(16).state)
+            self.assertFalse(self.factory.pin(18).state)
+        self.store.reset_timer()
+        self.store.start_timer()
+        self.client.post("/admin/complete", headers={"X-CSRF-Token": self.csrf})
+        self.assertFalse(self.factory.pin(9).state)
+        self.assertFalse(self.factory.pin(16).state)
+        self.assertEqual(self.trigger(manual_id).get_json()["state"], "on")
+
+    def test_physical_bcm_23_completion_runs_both_outputs_and_keeps_input_gates(self) -> None:
+        runtime = self.app.extensions["display_runtime"]
+        self.store.add_gpio_mapping("23", "complete-room")
+        runtime.configure_gpio_inputs()
+        for pin in (9, 16):
+            self.create_action(
+                f"Finish light {pin}", "toggle", pin=str(pin), trigger="room-complete",
+            )
+        runtime.handle_gpio_event(23, "complete-room")
+        self.assertFalse(self.store.get_gpio_activity()[1][0].accepted)
+        self.store.start_timer()
+        self.store.set_gpio_paused(True)
+        runtime.handle_gpio_event(23, "complete-room")
+        self.assertFalse(self.store.get_gpio_activity()[1][0].accepted)
+        self.store.set_gpio_paused(False)
+        self.store.toggle_timer_paused()
+        runtime.handle_gpio_event(23, "complete-room")
+        self.assertFalse(self.store.get_gpio_activity()[1][0].accepted)
+        self.assertFalse(self.factory.pin(9).state)
+        self.assertFalse(self.factory.pin(16).state)
+        self.store.toggle_timer_paused()
+        self.factory.pin(23).drive_low()
+        self.assertIsNotNone(self.store.get().room_completed_at)
+        self.assertTrue(self.store.get_gpio_activity()[1][0].accepted)
+        self.assertTrue(self.factory.pin(9).state)
+        self.assertTrue(self.factory.pin(16).state)
+        self.factory.pin(23).drive_high()
+        self.factory.pin(23).drive_low()
+        self.assertFalse(self.store.get_gpio_activity()[1][0].accepted)
+        self.assertTrue(self.factory.pin(9).state)
+        self.assertTrue(self.factory.pin(16).state)
+
+    def test_legacy_gpio_input_also_runs_completion_outputs(self) -> None:
+        self.create_action("Finish light", "toggle", pin="9", trigger="room-complete")
+        self.assertEqual(self.store.get_gpio_mappings(), [])
+        self.store.start_timer()
+        self.factory.pin(23).drive_low()
+        self.assertTrue(self.factory.pin(9).state)
+        self.assertIsNotNone(self.store.get().room_completed_at)
+        self.assertTrue(self.store.get_gpio_activity()[1][0].accepted)
+
+    def test_concurrent_completion_requests_do_not_toggle_outputs_twice(self) -> None:
+        self.create_action("Finish light", "toggle", pin="9", trigger="room-complete")
+        self.store.start_timer()
+        runtime = self.app.extensions["display_runtime"]
+        with (
+            patch.object(runtime.gpio, "send_signal", wraps=runtime.gpio.send_signal) as signal,
+            ThreadPoolExecutor(max_workers=4) as pool,
+        ):
+            results = list(pool.map(lambda _: runtime.complete_room(), range(4)))
+        signal.assert_called_once_with(9, "toggle", None)
+        self.assertTrue(self.factory.pin(9).state)
+        self.assertTrue(all(settings.room_completed_at for settings, _failures in results))
+
+    def test_completion_uses_on_off_and_timed_signals_for_named_and_direct_outputs(self) -> None:
+        self.create_action("On", "on", pin="9", trigger="room-complete")
+        self.create_action("Off", "off", pin="16", trigger="room-complete")
+        self.create_action(
+            "Timed", "timed", output_name="light", duration_seconds="5",
+            trigger="room-complete",
+        )
+        self.app.extensions["gpio"].activate_pin(16)
+        self.store.start_timer()
+        response = self.client.post("/admin/complete", headers={"X-CSRF-Token": self.csrf})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.factory.pin(9).state)
+        self.assertFalse(self.factory.pin(16).state)
+        self.assertTrue(self.factory.pin(17).state)
+        self.assertEqual(self.timer.call_args.args[0], 5)
+        self.timer.call_args.args[1]()
+        self.assertFalse(self.factory.pin(17).state)
+
+    def test_existing_actions_can_be_changed_to_automatic_and_back_without_recreation(self) -> None:
+        action_id = self.create_action("Finish light", "toggle", pin="9")
+        self.assertEqual(self.store.get_gpio_output_action(action_id).trigger, "manual")
+        url = f"/admin/gpio/actions/{action_id}/trigger-setting"
+        for trigger in ("room-complete", "manual"):
+            response = self.client.post(url, data={"csrf_token": self.csrf, "trigger": trigger})
+            self.assertEqual(response.status_code, 302)
+            initialize(self.database)
+            action = self.store.get_gpio_output_action(action_id)
+            self.assertEqual(action.trigger, trigger)
+            self.assertEqual(action.pin, 9)
+            self.assertEqual(action.state, "toggle")
+            page = self.client.get("/admin/gpio")
+            self.assertIn(f'value="{trigger}" selected'.encode(), page.data)
+        self.store.start_timer()
+        self.client.post("/admin/complete", headers={"X-CSRF-Token": self.csrf})
+        self.assertFalse(self.factory.pin(9).state)
+
+    def test_automatic_trigger_settings_require_valid_values_authentication_and_csrf(self) -> None:
+        action_id = self.create_action("Finish light", "toggle", pin="9")
+        url = f"/admin/gpio/actions/{action_id}/trigger-setting"
+        data = {"trigger": "room-complete", "csrf_token": self.csrf}
+        self.assertEqual(self.app.test_client().post(url, data=data).status_code, 401)
+        self.assertEqual(self.client.post(url, data={"trigger": "room-complete"}).status_code, 400)
+        self.assertEqual(self.client.post(url, data={**data, "trigger": "invalid"}).status_code, 400)
+        self.assertEqual(self.client.post(
+            "/admin/gpio/actions/999/trigger-setting", data=data,
+        ).status_code, 404)
+        self.assertEqual(self.store.get_gpio_output_action(action_id).trigger, "manual")
+        response = self.client.post("/admin/gpio/actions", data={
+            "csrf_token": self.csrf, "title": "Invalid trigger", "pin": "16",
+            "state": "toggle", "trigger": "invalid",
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(b"Choose when the GPIO output action runs.", response.data)
+        self.store.start_timer()
+        self.assertEqual(self.app.test_client().post("/admin/complete").status_code, 401)
+        self.assertEqual(self.client.post("/admin/complete").status_code, 400)
+        self.assertIsNone(self.store.get().room_completed_at)
+
+    def test_failed_completion_output_is_reported_and_does_not_block_the_other_pin(self) -> None:
+        for pin in (9, 16):
+            self.create_action(
+                f"Finish light {pin}", "toggle", pin=str(pin), trigger="room-complete",
+            )
+        gpio = self.app.extensions["gpio"]
+        send_signal = gpio.send_signal
+
+        def send_with_failure(
+            target: str | int, state: str, duration: int | None,
+        ) -> bool:
+            if target == 9:
+                raise OSError("test failure")
+            return send_signal(target, state, duration)
+
+        self.store.start_timer()
+        with (
+            patch.object(gpio, "send_signal", side_effect=send_with_failure),
+            self.assertLogs(self.app.logger, level="ERROR"),
+        ):
+            response = self.client.post("/admin/complete", headers={"X-CSRF-Token": self.csrf})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["failed_actions"], ["Finish light 9"])
+        self.assertIn("Room completed", response.get_json()["error"])
+        self.assertIsNotNone(self.store.get().room_completed_at)
+        self.assertTrue(self.factory.pin(16).state)
+        self.assertTrue(any(
+            "FAILED room-complete GPIO action 'Finish light 9'" in entry["description"]
+            for entry in self.store.get_actions_for_current_run()
+        ))
+
+    def test_physical_completion_remains_accepted_when_an_output_fails(self) -> None:
+        self.create_action("Finish light", "toggle", pin="9", trigger="room-complete")
+        self.store.start_timer()
+        with (
+            patch.object(self.app.extensions["gpio"], "send_signal", side_effect=OSError("test failure")),
+            self.assertLogs(self.app.logger, level="ERROR"),
+        ):
+            self.factory.pin(23).drive_low()
+        self.assertIsNotNone(self.store.get().room_completed_at)
+        self.assertTrue(self.store.get_gpio_activity()[1][0].accepted)
+
+    def test_failure_expiry_reset_and_completion_before_start_do_not_run_outputs(self) -> None:
+        self.create_action("Finish light", "toggle", pin="9", trigger="room-complete")
+        response = self.client.post("/admin/complete", headers={"X-CSRF-Token": self.csrf})
+        self.assertEqual(response.status_code, 409)
+        self.assertFalse(self.factory.pin(9).state)
+        self.store.start_timer()
+        self.client.post("/admin/fail", headers={"X-CSRF-Token": self.csrf})
+        self.assertFalse(self.factory.pin(9).state)
+        self.store.reset_timer()
+        self.assertFalse(self.factory.pin(9).state)
+        self.store.start_timer()
+        expired = self.store.adjust_timer(-3600)
+        self.app.extensions["display_runtime"].schedule_automatic_failure(expired)
+        self.assertIsNotNone(self.store.get().room_failed_at)
+        self.assertFalse(self.factory.pin(9).state)
+
+    def test_existing_timed_schema_migrates_without_losing_signals_or_durations(self) -> None:
+        legacy = Path(self.directory.name) / "timed-legacy.db"
+        with closing(connect(legacy)) as connection:
+            connection.executescript("""
+                CREATE TABLE gpio_output_actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL UNIQUE,
+                    output_name TEXT,
+                    pin INTEGER,
+                    state TEXT NOT NULL,
+                    duration_seconds INTEGER
+                );
+                INSERT INTO gpio_output_actions
+                VALUES (4, 'Timed', NULL, 9, 'timed', 10), (7, 'Toggle', NULL, 16, 'toggle', NULL);
+            """)
+        initialize(legacy)
+        initialize(legacy)
+        with closing(connect(legacy)) as connection:
+            rows = connection.execute(
+                "SELECT id, title, pin, state, duration_seconds, trigger FROM gpio_output_actions ORDER BY id"
+            ).fetchall()
+        self.assertEqual([tuple(row) for row in rows], [
+            (4, "Timed", 9, "timed", 10, "manual"),
+            (7, "Toggle", 16, "toggle", None, "manual"),
+        ])
 
     def test_current_schema_migrates_direct_and_named_actions_without_losing_ids(self) -> None:
         legacy = Path(self.directory.name) / "legacy.db"

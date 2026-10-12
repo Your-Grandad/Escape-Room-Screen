@@ -92,6 +92,7 @@ def initialize(database_path: Path | str) -> None:
                 pin INTEGER CHECK (pin IS NULL OR pin BETWEEN 0 AND 27),
                 state TEXT NOT NULL CHECK (state IN ('on', 'off', 'toggle', 'timed')),
                 duration_seconds INTEGER,
+                trigger TEXT NOT NULL DEFAULT 'manual' CHECK (trigger IN ('manual', 'room-complete')),
                 CHECK (
                     (state = 'timed' AND duration_seconds IS NOT NULL AND duration_seconds > 0)
                     OR (state != 'timed' AND duration_seconds IS NULL)
@@ -181,6 +182,7 @@ def initialize(database_path: Path | str) -> None:
                     pin INTEGER CHECK (pin IS NULL OR pin BETWEEN 0 AND 27),
                     state TEXT NOT NULL CHECK (state IN ('on', 'off', 'toggle', 'timed')),
                     duration_seconds INTEGER,
+                    trigger TEXT NOT NULL DEFAULT 'manual' CHECK (trigger IN ('manual', 'room-complete')),
                     CHECK (
                         (state = 'timed' AND duration_seconds IS NOT NULL AND duration_seconds > 0)
                         OR (state != 'timed' AND duration_seconds IS NULL)
@@ -202,6 +204,15 @@ def initialize(database_path: Path | str) -> None:
                 """
             )
             connection.execute("DROP TABLE gpio_output_actions_legacy")
+        gpio_output_action_names = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(gpio_output_actions)")
+        }
+        if "trigger" not in gpio_output_action_names:
+            connection.execute(
+                "ALTER TABLE gpio_output_actions ADD COLUMN trigger TEXT NOT NULL "
+                "DEFAULT 'manual' CHECK (trigger IN ('manual', 'room-complete'))"
+            )
         for column in (
             "screen_rotation INTEGER NOT NULL DEFAULT 0 CHECK (screen_rotation IN (0, 90, 180, 270))",
             "timer_started_at TEXT",
