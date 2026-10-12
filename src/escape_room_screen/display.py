@@ -10,6 +10,7 @@ from pathlib import Path
 from threading import TIMEOUT_MAX
 
 from .database import connect
+from .gpio import validate_output_signal
 from .screen_layout import ScreenLayout, validate_screen_layout
 from .media import MediaSettings, default_media_settings, validate_media_settings
 
@@ -172,6 +173,7 @@ class GpioOutputAction:
     output_name: str | None
     pin: int | None
     state: str
+    duration_seconds: int | None = None
 
     @property
     def label(self) -> str:
@@ -1135,7 +1137,7 @@ class DisplaySettingsStore:
         with closing(connect(self.database_path)) as connection:
             rows = connection.execute(
                 """
-                SELECT id, title, output_name, pin, state
+                SELECT id, title, output_name, pin, state, duration_seconds
                 FROM gpio_output_actions
                 ORDER BY id
                 """
@@ -1146,7 +1148,7 @@ class DisplaySettingsStore:
         with closing(connect(self.database_path)) as connection:
             row = connection.execute(
                 """
-                SELECT id, title, output_name, pin, state
+                SELECT id, title, output_name, pin, state, duration_seconds
                 FROM gpio_output_actions
                 WHERE id = ?
                 """,
@@ -1160,21 +1162,21 @@ class DisplaySettingsStore:
         output_name: object,
         state: object,
         configured_outputs: list[str],
+        duration_seconds: object = None,
     ) -> GpioOutputAction:
         if not isinstance(label, str) or not label.strip() or len(label.strip()) > MAX_TITLE_LENGTH:
             raise ValueError("Button name must contain 1 to 80 characters.")
         if not isinstance(output_name, str) or output_name not in configured_outputs:
             raise ValueError("Choose a configured GPIO output.")
-        if state not in ("on", "off"):
-            raise ValueError("Choose whether the GPIO output turns on or off.")
+        duration = validate_output_signal(state, duration_seconds)
         with closing(connect(self.database_path)) as connection:
             try:
                 result = connection.execute(
                     """
-                    INSERT INTO gpio_output_actions (title, output_name, state)
-                    VALUES (?, ?, ?)
+                    INSERT INTO gpio_output_actions (title, output_name, state, duration_seconds)
+                    VALUES (?, ?, ?, ?)
                     """,
-                    (label.strip(), output_name, state),
+                    (label.strip(), output_name, state, duration),
                 )
             except sqlite3.IntegrityError as error:
                 raise ValueError("An extra button already has that name.") from error
@@ -1188,13 +1190,13 @@ class DisplaySettingsStore:
         title: object,
         pin: object,
         state: object,
+        duration_seconds: object = None,
     ) -> GpioOutputAction:
         if not isinstance(title, str) or not title.strip() or len(title.strip()) > MAX_TITLE_LENGTH:
             raise ValueError("Event title must contain 1 to 80 characters.")
         if not isinstance(pin, str) or not pin.isdecimal() or not 0 <= int(pin) <= 27:
             raise ValueError("GPIO pin must be a BCM pin number from 0 to 27.")
-        if state not in ("on", "off"):
-            raise ValueError("Choose whether the GPIO output turns on or off.")
+        duration = validate_output_signal(state, duration_seconds)
         pin_number = int(pin)
         with closing(connect(self.database_path)) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -1207,10 +1209,10 @@ class DisplaySettingsStore:
             try:
                 result = connection.execute(
                     """
-                    INSERT INTO gpio_output_actions (title, pin, state)
-                    VALUES (?, ?, ?)
+                    INSERT INTO gpio_output_actions (title, pin, state, duration_seconds)
+                    VALUES (?, ?, ?, ?)
                     """,
-                    (title.strip(), pin_number, state),
+                    (title.strip(), pin_number, state, duration),
                 )
             except sqlite3.IntegrityError as error:
                 raise ValueError("An extra button already has that name.") from error

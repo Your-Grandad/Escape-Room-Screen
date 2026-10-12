@@ -346,12 +346,14 @@ function initGpioOutputActionButtons() {
       try {
         const action = await post(`/admin/gpio/actions/${button.dataset.gpioAction}/trigger`);
         const target = action.pin == null ? action.output_name : `BCM ${action.pin}`;
-        setStatusText(window.translate("js.gpio_action_triggered", {
+        setStatusText(window.translate(
+          action.signal === "timed" ? "js.gpio_action_timed" : "js.gpio_action_triggered", {
           label: action.label,
           output: target,
           state: window.translate(
             action.state === "on" ? "js.output_on" : "js.output_off",
           ),
+          seconds: action.duration_seconds,
         }));
       } catch (error) {
         setStatusText(error.message, "error");

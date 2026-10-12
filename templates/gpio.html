@@ -29,12 +29,14 @@
     <label>{{ t("gpio.event_title") }} <input name="title" maxlength="80" required></label>
     <label>{{ t("gpio.bcm_pin") }} <input name="pin" inputmode="numeric" min="0" max="27" type="number" required></label>
     <label>{{ t("gpio.signal") }}
-      <select name="state">
+      <select name="state" id="output-signal">
         <option value="on">{{ t("gpio.signal_on") }}</option>
         <option value="off">{{ t("gpio.signal_off") }}</option>
+        <option value="toggle">{{ t("gpio.signal_toggle") }}</option>
+        <option value="timed">{{ t("gpio.signal_timed") }}</option>
       </select>
     </label>
-    <label>{{ t("gpio.event") }} <input value="{{ t("gpio.trigger_event") }}" readonly></label>
+    <label id="output-duration-label" hidden>{{ t("gpio.duration_seconds") }} <input name="duration_seconds" id="output-duration" type="number" min="1" step="1" value="1" disabled></label>
     </div>
     <div class="form-actions">
       <button type="submit">{{ t("gpio.create_trigger_event") }}</button>
@@ -44,7 +46,7 @@
     {% for action in gpio_output_actions %}
       <li>
         {% if action.pin is not none %}{% set target = "BCM " ~ action.pin %}{% else %}{% set target = action.output_name ~ " (BCM " ~ gpio_output_pins[action.output_name] ~ ")" %}{% endif %}
-        <span>{{ t("gpio.action_target", label=action.title, output=target, state=t("gpio.signal_" + action.state)) }}</span>
+        <span>{{ t("gpio.action_target", label=action.title, output=target, state=t("gpio.signal_" + action.state)) }}{% if action.duration_seconds is not none %} — {{ t("gpio.duration_value", seconds=action.duration_seconds) }}{% endif %}</span>
         <form action="{{ url_for('delete_gpio_output_action', action_id=action.id) }}" method="post">
           <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
           <button class="icon-button danger" type="submit" aria-label="{{ t("gpio.delete_action") }}" title="{{ t("gpio.delete_action") }}">
@@ -83,5 +85,17 @@
   <h2>{{ t("gpio.recent") }}</h2><ol class="hint-history">{% for entry in activity %}<li><span class="hint-count">BCM {{ entry.pin }}</span><span>{{ entry.event }} — {% if entry.accepted %}{{ t("gpio.triggered") }}{% else %}{{ t("gpio.ignored") }}{% endif %}</span><time>{{ entry.triggered_at }} UTC</time></li>{% else %}<li>{{ t("gpio.none_activity") }}</li>{% endfor %}</ol>
   </section>
   <script>document.getElementById('event-select').addEventListener('change', function(e){document.getElementById('preset-select-label').hidden=e.target.value!=='send-preset';});</script>
+  <script>
+    const outputSignal = document.getElementById('output-signal');
+    function updateOutputDuration() {
+      const timed = outputSignal.value === 'timed';
+      document.getElementById('output-duration-label').hidden = !timed;
+      const duration = document.getElementById('output-duration');
+      duration.disabled = !timed;
+      duration.required = timed;
+    }
+    outputSignal.addEventListener('change', updateOutputDuration);
+    updateOutputDuration();
+  </script>
   {% include "includes/donate_widget.html" %}
 </main>{% include "includes/admin_scripts.html" %}</body></html>

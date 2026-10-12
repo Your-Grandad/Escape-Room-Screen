@@ -1,12 +1,31 @@
 import logging
 from collections.abc import Callable
 from collections.abc import Iterable
+from threading import RLock, Timer, TIMEOUT_MAX
 
 from gpiozero import Button, OutputDevice
-from gpiozero.exc import BadPinFactory, GPIOPinInUse
+from gpiozero.exc import BadPinFactory, GPIOPinInUse, GPIOZeroError
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def validate_output_signal(state: object, duration_seconds: object = None) -> int | None:
+    if state not in ("on", "off", "toggle", "timed"):
+        raise ValueError("Choose an on, off, toggle, or timed GPIO signal.")
+    if state != "timed":
+        return None
+    try:
+        if isinstance(duration_seconds, bool) or not isinstance(duration_seconds, (str, int)):
+            raise ValueError
+        if isinstance(duration_seconds, str) and not duration_seconds.strip().isdecimal():
+            raise ValueError
+        duration = int(duration_seconds)
+        if not 0 < duration <= TIMEOUT_MAX:
+            raise ValueError
+    except ValueError as error:
+        raise ValueError("Timed GPIO signals require a positive whole number of seconds.") from error
+    return duration
 
 
 class GpioController:
@@ -21,6 +40,8 @@ class GpioController:
         self._configured_output_pins = set((output_pins or {}).values())
         self._direct_outputs: dict[int, OutputDevice] = {}
         self._buttons: dict[int, Button] = {}
+        self._output_lock = RLock()
+        self._output_timers: dict[int, Timer] = {}
         self.available = True
         try:
             for name, pin in (output_pins or {}).items():
@@ -78,38 +99,89 @@ class GpioController:
             LOGGER.warning("GPIO hardware is unavailable; running without physical pin control.")
 
     def activate(self, name: str) -> None:
-        output = self._outputs.get(name)
-        if output is None:
-            raise KeyError(name)
-        output.on()
+        self.send_signal(name, "on")
 
     def deactivate(self, name: str) -> None:
-        output = self._outputs.get(name)
-        if output is None:
-            raise KeyError(name)
-        output.off()
+        self.send_signal(name, "off")
 
     def activate_pin(self, pin: int) -> None:
-        self._direct_output(pin).on()
+        self.send_signal(pin, "on")
 
     def deactivate_pin(self, pin: int) -> None:
-        self._direct_output(pin).off()
+        self.send_signal(pin, "off")
+
+    def send_signal(
+        self, target: str | int, state: str, duration_seconds: int | None = None,
+    ) -> bool:
+        duration = validate_output_signal(state, duration_seconds)
+        with self._output_lock:
+            if isinstance(target, str):
+                output = self._outputs.get(target)
+                if output is None:
+                    raise KeyError(target)
+                pin = output.pin.number
+            else:
+                pin = target
+                output = self._direct_output(pin)
+            self._cancel_output_timer(pin)
+            if state == "off":
+                output.off()
+            elif state == "toggle":
+                output.toggle()
+            else:
+                output.on()
+            if duration is not None:
+                def turn_off() -> None:
+                    with self._output_lock:
+                        # A cancelled callback may already be waiting for the lock.
+                        if self._output_timers.get(pin) is not timer:
+                            return
+                        self._output_timers.pop(pin)
+                        try:
+                            output.off()
+                        except (RuntimeError, OSError, GPIOZeroError):
+                            LOGGER.exception("Failed to turn off timed GPIO output BCM %s.", pin)
+
+                timer = Timer(duration, turn_off)
+                timer.daemon = True
+                self._output_timers[pin] = timer
+                try:
+                    timer.start()
+                except RuntimeError:
+                    self._output_timers.pop(pin)
+                    output.off()
+                    raise
+            return bool(output.value)
+
+    def _cancel_output_timer(self, pin: int) -> None:
+        timer = self._output_timers.pop(pin, None)
+        if timer is not None:
+            timer.cancel()
 
     def release_pin(self, pin: int) -> None:
-        output = self._direct_outputs.pop(pin, None)
-        if output is not None:
-            output.close()
+        with self._output_lock:
+            self._cancel_output_timer(pin)
+            output = self._direct_outputs.pop(pin, None)
+            if output is not None:
+                try:
+                    output.off()
+                finally:
+                    output.close()
 
     def close(self) -> None:
-        for device in (
-            *self._outputs.values(),
-            *self._direct_outputs.values(),
-            *self._buttons.values(),
-        ):
-            device.close()
-        self._outputs.clear()
-        self._direct_outputs.clear()
-        self._buttons.clear()
+        with self._output_lock:
+            for pin in list(self._output_timers):
+                self._cancel_output_timer(pin)
+            for output in (*self._outputs.values(), *self._direct_outputs.values()):
+                try:
+                    output.off()
+                finally:
+                    output.close()
+            for button in self._buttons.values():
+                button.close()
+            self._outputs.clear()
+            self._direct_outputs.clear()
+            self._buttons.clear()
 
     def _direct_output(self, pin: int) -> OutputDevice:
         if not isinstance(pin, int) or not 0 <= pin <= 27:

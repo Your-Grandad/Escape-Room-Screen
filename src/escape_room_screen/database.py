@@ -90,7 +90,12 @@ def initialize(database_path: Path | str) -> None:
                 title TEXT NOT NULL UNIQUE,
                 output_name TEXT,
                 pin INTEGER CHECK (pin IS NULL OR pin BETWEEN 0 AND 27),
-                state TEXT NOT NULL CHECK (state IN ('on', 'off')),
+                state TEXT NOT NULL CHECK (state IN ('on', 'off', 'toggle', 'timed')),
+                duration_seconds INTEGER,
+                CHECK (
+                    (state = 'timed' AND duration_seconds IS NOT NULL AND duration_seconds > 0)
+                    OR (state != 'timed' AND duration_seconds IS NULL)
+                ),
                 CHECK (
                     (output_name IS NOT NULL AND pin IS NULL)
                     OR (output_name IS NULL AND pin IS NOT NULL)
@@ -162,6 +167,7 @@ def initialize(database_path: Path | str) -> None:
             "title" not in gpio_output_action_columns
             or "pin" not in gpio_output_action_columns
             or gpio_output_action_columns["output_name"]["notnull"]
+            or "duration_seconds" not in gpio_output_action_columns
         ):
             connection.execute(
                 "ALTER TABLE gpio_output_actions RENAME TO gpio_output_actions_legacy"
@@ -173,7 +179,12 @@ def initialize(database_path: Path | str) -> None:
                     title TEXT NOT NULL UNIQUE,
                     output_name TEXT,
                     pin INTEGER CHECK (pin IS NULL OR pin BETWEEN 0 AND 27),
-                    state TEXT NOT NULL CHECK (state IN ('on', 'off')),
+                    state TEXT NOT NULL CHECK (state IN ('on', 'off', 'toggle', 'timed')),
+                    duration_seconds INTEGER,
+                    CHECK (
+                        (state = 'timed' AND duration_seconds IS NOT NULL AND duration_seconds > 0)
+                        OR (state != 'timed' AND duration_seconds IS NULL)
+                    ),
                     CHECK (
                         (output_name IS NOT NULL AND pin IS NULL)
                         OR (output_name IS NULL AND pin IS NOT NULL)
@@ -181,10 +192,12 @@ def initialize(database_path: Path | str) -> None:
                 )
                 """
             )
+            title_column = "title" if "title" in gpio_output_action_columns else "label"
+            pin_column = "pin" if "pin" in gpio_output_action_columns else "NULL"
             connection.execute(
-                """
-                INSERT INTO gpio_output_actions (id, title, output_name, state)
-                SELECT id, label, output_name, state
+                f"""
+                INSERT INTO gpio_output_actions (id, title, output_name, pin, state)
+                SELECT id, {title_column}, output_name, {pin_column}, state
                 FROM gpio_output_actions_legacy
                 """
             )

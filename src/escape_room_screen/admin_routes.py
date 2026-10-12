@@ -19,6 +19,7 @@ from flask import (
     url_for,
 )
 from werkzeug.security import check_password_hash, generate_password_hash
+from gpiozero.exc import GPIOZeroError
 
 from .database import (
     create_admin_user,
@@ -757,6 +758,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                     request.form.get("output_name"),
                     request.form.get("state"),
                     gpio.output_names(),
+                    request.form.get("duration_seconds"),
                 )
             else:
                 raw_pin = request.form.get("pin")
@@ -772,12 +774,17 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                     and raw_pin.isdecimal()
                     and 0 <= int(raw_pin) <= 27
                     and gpio.is_output_pin(int(raw_pin))
+                    and (
+                        int(raw_pin) in gpio.output_pins().values()
+                        or not store.has_gpio_trigger_event_for_pin(int(raw_pin))
+                    )
                 ):
                     raise ValueError("That BCM pin is already configured as an output.")
                 action = store.add_gpio_trigger_event(
                     request.form.get("title") or request.form.get("label"),
                     raw_pin,
                     request.form.get("state"),
+                    request.form.get("duration_seconds"),
                 )
         except ValueError as error:
             return render_gpio_page(str(error)), 400
@@ -1091,33 +1098,36 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             abort(404)
         try:
             if action.pin is not None:
-                if action.state == "on":
-                    gpio.activate_pin(action.pin)
-                else:
-                    gpio.deactivate_pin(action.pin)
+                is_on = gpio.send_signal(action.pin, action.state, action.duration_seconds)
             elif action.output_name is None or action.output_name not in gpio.output_names():
                 abort(404)
-            elif action.state == "on":
-                gpio.activate(action.output_name)
             else:
-                gpio.deactivate(action.output_name)
+                is_on = gpio.send_signal(action.output_name, action.state, action.duration_seconds)
         except KeyError:
             abort(404)
         except ValueError as error:
             return jsonify(error=str(error)), 409
         except RuntimeError:
+            app.logger.exception("Failed to trigger GPIO output action %s.", action_id)
             return jsonify(error="GPIO hardware is unavailable."), 503
+        except (OSError, GPIOZeroError):
+            app.logger.exception("Failed to trigger GPIO output action %s.", action_id)
+            return jsonify(error="Failed to control GPIO output."), 503
         runtime.record_action(
             "gpio",
             f"Triggered extra GPIO button '{action.title}' for "
-            f"{action.output_name or f'BCM {action.pin}'} ({action.state})",
+            f"{action.output_name or f'BCM {action.pin}'} "
+            f"({'on' if is_on else 'off'}; signal={action.state}"
+            f"{f'; duration={action.duration_seconds}s' if action.duration_seconds else ''})",
         )
         response: dict[str, object] = dict(
             action_id=action.id,
             label=action.title,
             output_name=action.output_name,
-            state=action.state,
+            state="on" if is_on else "off",
         )
+        if action.state in ("toggle", "timed"):
+            response.update(signal=action.state, duration_seconds=action.duration_seconds)
         if action.pin is not None:
             response.update(title=action.title, pin=action.pin)
         return jsonify(response)

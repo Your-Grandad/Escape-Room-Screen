@@ -308,6 +308,23 @@ pin number. Each output gains On and Off controls in `/admin`:
 export GPIO_OUTPUTS='{"door-light": 27, "buzzer": 23}'
 ```
 
+Under **Admin > GPIO > Trigger event**, create an extra button with a title,
+BCM output pin, and signal: **On**, **Off**, **Toggle**, or **Timed on, then off**.
+For timed signals, enter a positive whole number of seconds. For example, a
+**Toggle light** button alternates the light on and off on each click; a
+**Light for 10 seconds** button turns it on and automatically off after 10 seconds.
+Buttons appear under **Extra buttons** in `/admin`.
+
+Several buttons can target the same output pin, including an existing light's
+pin. Toggle uses the current output state, not a separate state per button.
+Another timed click restarts that pin's countdown; On, Off, or Toggle cancels
+the pending auto-off. These output durations are independent of the room timer
+and GPIO input pause. Saved button settings survive app restarts, but live
+output states and countdowns do not; pins initialize off when opened. Deleting the last
+button for a direct pin releases it and cancels its countdown. Keep output
+pins separate from input mappings and `GPIO_OUTPUTS` assignments; the latter
+already have dedicated On/Off controls.
+
 To configure a room-complete input before opening the admin page, set
 `GPIO_INPUTS` with the event name and BCM pin:
 

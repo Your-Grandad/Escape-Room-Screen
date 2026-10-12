@@ -32,6 +32,7 @@
         type="button"
         data-gpio-action="{{ action.id }}"
         data-gpio-action-label="{{ action.label }}"
+        title="{{ t('gpio.signal_' + action.state) }}{% if action.duration_seconds is not none %} — {{ t('gpio.duration_value', seconds=action.duration_seconds) }}{% endif %}"
       >{{ action.label }}</button>
     {% else %}
       <p id="no-gpio-output-actions">{{ t("gpio.no_actions") }}</p>

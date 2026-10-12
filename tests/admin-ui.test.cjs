@@ -98,6 +98,70 @@ test("short custom timers use the same exact warning thresholds", () => {
   assert.equal(presentation(settings, 400).remainingSeconds, 0);
 });
 
+test("GPIO action feedback uses the actual toggle state and timed duration", async () => {
+  let click;
+  let payload;
+  const messages = [];
+  const requests = [];
+  const button = {
+    dataset: { gpioAction: "7" },
+    addEventListener(name, handler) { if (name === "click") click = handler; },
+  };
+  const status = { textContent: "", dataset: {}, classList: { toggle() {} } };
+  const context = {
+    window: {
+      csrfToken: "test-csrf",
+      translate(key, values) {
+        if (values) messages.push({ key, ...values });
+        return key;
+      },
+    },
+    document: {
+      querySelector: selector => selector === "#status" ? status : null,
+      querySelectorAll: selector => selector === "[data-gpio-action]" ? [button] : [],
+    },
+    setInterval() {},
+    async fetch(path, options) {
+      requests.push({ path, options });
+      return { ok: true, json: async () => payload };
+    },
+  };
+  vm.runInNewContext(readScript("admin-dom.js"), context);
+  vm.runInNewContext(readScript("admin.js"), context);
+  payload = { label: "Light", pin: 18, signal: "toggle", state: "on" };
+  await click();
+  assert.equal(messages.at(-1).key, "js.gpio_action_triggered");
+  assert.equal(messages.at(-1).state, "js.output_on");
+  payload = { ...payload, state: "off" };
+  await click();
+  assert.equal(messages.at(-1).state, "js.output_off");
+  payload = { label: "Light", pin: 18, signal: "timed", state: "on", duration_seconds: 10 };
+  await click();
+  assert.equal(messages.at(-1).key, "js.gpio_action_timed");
+  assert.equal(messages.at(-1).seconds, 10);
+  assert.equal(messages.at(-1).output, "BCM 18");
+  assert.equal(requests[0].path, "/admin/gpio/actions/7/trigger");
+  assert.equal(requests[0].options.headers["X-CSRF-Token"], "test-csrf");
+});
+
+test("GPIO duration input is enabled and required only for timed signals", () => {
+  const template = readFileSync(join(__dirname, "..", "templates", "gpio.html"), "utf8");
+  const script = template.match(/<script>\s*(const outputSignal[\s\S]*?)<\/script>/)[1];
+  const elements = {
+    "output-signal": { value: "on", addEventListener(name, handler) { this[name] = handler; } },
+    "output-duration-label": {},
+    "output-duration": {},
+  };
+  vm.runInNewContext(script, { document: { getElementById: id => elements[id] } });
+  for (const state of ["on", "off", "toggle", "timed", "on"]) {
+    elements["output-signal"].value = state;
+    elements["output-signal"].change();
+    assert.equal(elements["output-duration-label"].hidden, state !== "timed");
+    assert.equal(elements["output-duration"].disabled, state !== "timed");
+    assert.equal(elements["output-duration"].required, state === "timed");
+  }
+});
+
 test("room interaction follows live timer state without clearing manual pause", () => {
   const labels = new Map();
   const button = {

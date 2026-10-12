@@ -30,6 +30,18 @@ class FakeOutputGpioController:
         self._direct_pins: set[int] = set()
         self.available = True
         self.calls: list[tuple[str, str | int]] = []
+        self._states: dict[str | int, bool] = {}
+
+    def send_signal(
+        self, target: str | int, state: str, duration_seconds: int | None = None,
+    ) -> bool:
+        is_on = not self._states.get(target, False) if state == "toggle" else state != "off"
+        self._states[target] = is_on
+        if isinstance(target, str):
+            self.activate(target) if is_on else self.deactivate(target)
+        else:
+            self.activate_pin(target) if is_on else self.deactivate_pin(target)
+        return is_on
 
     def configure_inputs(self, *_args: object) -> None:
         pass
@@ -1644,6 +1656,7 @@ class HomeScreenTests(unittest.TestCase):
             ):
                 controller.activate_pin(20)
             controller.release_pin(18)
+            self.assertEqual(output.off.call_count, 2)
             output.close.assert_called_once_with()
             controller.close()
 
@@ -1748,7 +1761,7 @@ class HomeScreenTests(unittest.TestCase):
         )
         self.assertEqual(invalid_state.status_code, 400)
         self.assertIn(
-            b"Choose whether the GPIO output turns on or off.",
+            b"Choose an on, off, toggle, or timed GPIO signal.",
             invalid_state.data,
         )
 
