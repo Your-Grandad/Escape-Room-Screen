@@ -13,6 +13,13 @@
   </section>
   <form id="announcement-form" action="{{ url_for('send_announcement') }}" method="post">
     <input name="csrf_token" type="hidden" value="{{ csrf_token }}">
+    <label>{{ t("announcement.duration") }}
+      <select id="hint-duration" name="duration_minutes">
+        {% for minutes in hint_duration_minutes %}
+          <option value="{{ minutes }}" {% if minutes == 2 %}selected{% endif %}>{{ t("js.duration_minutes", value=minutes) }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label>{{ t("announcement.message") }} <textarea name="message" maxlength="500" required></textarea></label>
     <button id="send-hint" type="submit">{{ t("announcement.send") }}</button>
   </form>

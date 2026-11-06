@@ -2,15 +2,17 @@ import json
 import tempfile
 import unittest
 from contextlib import closing
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+from werkzeug.http import parse_options_header
 
 from escape_room_screen import create_app
 from escape_room_screen.database import connect, initialize
 from escape_room_screen.display import DisplaySettingsStore
 from escape_room_screen.media import default_media_settings, validate_media_settings
-from escape_room_screen.reports import create_result_report, validate_report_dates
+from escape_room_screen.reports import create_result_report, result_report_filename, validate_report_dates
 
 
 class MediaTests(unittest.TestCase):
@@ -230,6 +232,7 @@ class MediaTests(unittest.TestCase):
         self.assertTrue(response.data.startswith(b"%PDF-"))
         self.assertEqual(response.mimetype, "application/pdf")
         self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
         self.assertIn("attachment", response.headers["Content-Disposition"])
         empty = self.client.get("/admin/reports/results.pdf?start=2027-01-01")
         self.assertEqual(empty.status_code, 200)
@@ -239,6 +242,103 @@ class MediaTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "1,000"):
             create_result_report("Room", entries * 501, None, None)
         self.assertEqual(validate_report_dates("", ""), (None, None))
+
+    def test_pdf_filename_uses_room_name_and_selected_dates(self):
+        current = self.store.get()
+        self.store.update({
+            "title": "The Clockwork Room", "message": current.message,
+            "background_colour": current.background_colour, "accent_colour": current.accent_colour,
+        })
+        cases = (
+            ({"start": "2026-10-01", "end": "2026-10-12"}, "2026-10-01-to-2026-10-12"),
+            ({"start": "2026-10-12", "end": "2026-10-12"}, "2026-10-12-to-2026-10-12"),
+            ({"start": "2026-10-01"}, "from-2026-10-01"),
+            ({"end": "2026-10-12"}, "through-2026-10-12"),
+            ({}, "all-time-2026-10-12"),
+        )
+        with patch("escape_room_screen.reports.datetime") as clock:
+            clock.now.return_value = datetime(2026, 10, 12, 13, 0, tzinfo=timezone.utc)
+            for query, period in cases:
+                with self.subTest(query=query):
+                    response = self.client.get("/admin/reports/results.pdf", query_string=query)
+                    self.assertEqual(response.status_code, 200)
+                    disposition, options = parse_options_header(response.headers["Content-Disposition"])
+                    self.assertEqual(disposition, "attachment")
+                    self.assertEqual(options["filename"], f"The-Clockwork-Room-{period}.pdf")
+                    self.assertEqual(response.headers["Cache-Control"], "no-store")
+                    self.assertTrue(response.data.startswith(b"%PDF-"))
+
+    def test_pdf_room_names_cannot_inject_headers_or_download_paths(self):
+        current = self.store.get()
+        for title in (
+            '../../Room "A"\\B\r\nX-Injected: yes',
+            "La mansión",
+            "東京",
+            "<script>alert(1)</script>",
+        ):
+            with self.subTest(title=title):
+                self.store.update({
+                    "title": title, "message": current.message,
+                    "background_colour": current.background_colour, "accent_colour": current.accent_colour,
+                })
+                response = self.client.get("/admin/reports/results.pdf", query_string={
+                    "start": "2026-10-01", "end": "2026-10-12",
+                })
+                self.assertEqual(response.status_code, 200)
+                header = response.headers["Content-Disposition"]
+                self.assertNotIn("\r", header)
+                self.assertNotIn("\n", header)
+                self.assertNotIn("X-Injected", response.headers)
+                disposition, options = parse_options_header(header)
+                self.assertEqual(disposition, "attachment")
+                filename = options["filename"]
+                self.assertRegex(filename, r"^[A-Za-z0-9_.-]+-2026-10-01-to-2026-10-12\.pdf$")
+                self.assertNotIn("/", filename)
+                self.assertNotIn("\\", filename)
+                self.assertFalse(filename.startswith("."))
+                self.assertTrue(response.data.startswith(b"%PDF-"))
+        self.assertEqual(
+            result_report_filename("La mansión", "2026-10-01", "2026-10-12"),
+            "La-mansion-2026-10-01-to-2026-10-12.pdf",
+        )
+        self.assertEqual(
+            result_report_filename("東京", "2026-10-01", "2026-10-12"),
+            "room-2026-10-01-to-2026-10-12.pdf",
+        )
+
+    def test_pdf_invalid_date_values_do_not_reach_report_or_filename_generation(self):
+        with (
+            patch("escape_room_screen.admin_routes.create_result_report") as report,
+            patch("escape_room_screen.admin_routes.result_report_filename") as filename,
+        ):
+            for field in ("start", "end"):
+                for value in ("2026-02-30", "20261012", "../../results", "2026-10-12\r\nX-Injected: yes"):
+                    with self.subTest(field=field, value=value):
+                        response = self.client.get(
+                            "/admin/reports/results.pdf", query_string={field: value},
+                        )
+                        self.assertEqual(response.status_code, 400)
+                        self.assertEqual(response.mimetype, "application/json")
+                        self.assertNotIn("Content-Disposition", response.headers)
+            report.assert_not_called()
+            filename.assert_not_called()
+
+    def test_pdf_export_rejects_unauthenticated_and_expired_admin_sessions(self):
+        with patch("escape_room_screen.admin_routes.create_result_report") as report:
+            anonymous = self.app.test_client().get("/admin/reports/results.pdf")
+            self.assertEqual(anonymous.status_code, 302)
+            self.assertTrue(anonymous.headers["Location"].endswith("/admin/login"))
+            self.assertNotIn("Content-Disposition", anonymous.headers)
+            with closing(connect(self.db)) as connection:
+                connection.execute(
+                    "UPDATE admin_users SET session_version = session_version + 1 WHERE username = 'admin'"
+                )
+                connection.commit()
+            expired = self.client.get("/admin/reports/results.pdf")
+            self.assertEqual(expired.status_code, 302)
+            self.assertTrue(expired.headers["Location"].endswith("/admin/login"))
+            self.assertNotIn("Content-Disposition", expired.headers)
+            report.assert_not_called()
 
 
 if __name__ == "__main__":

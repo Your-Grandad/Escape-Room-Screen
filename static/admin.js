@@ -135,17 +135,19 @@ function applyActiveTimerSettings(settings) {
   const previousSnapshot = activeTimerSnapshot;
   updateActiveTimerSnapshot(settings);
   updateActiveTimerDisplay();
-  const justFailed = Boolean(
+  const endedAt = settings.room_completed_at || settings.room_failed_at;
+  const justFinished = Boolean(
     previousSnapshot
+    && settings.timer_started_at
     && previousSnapshot.timer_started_at === settings.timer_started_at
     && !previousSnapshot.room_failed_at
     && !previousSnapshot.room_completed_at
-    && settings.room_failed_at,
+    && endedAt,
   );
-  if (!justFailed || !completionDialog || !completionTime) return;
-  const resultKey = `${settings.timer_started_at}:${settings.room_failed_at}`;
+  if (!justFinished || !completionDialog || !completionTime) return;
+  const resultKey = `${settings.timer_started_at}:${endedAt}`;
   if (shownRoomResultKey === resultKey) return;
-  showRoomResultDialog(settings, settings.room_failed_at);
+  showRoomResultDialog(settings, endedAt);
 }
 
 function initDisplayEventStream() {
@@ -530,15 +532,16 @@ function showRoomResultDialog(settings, endedAt) {
 async function sendHint() {
   if (!announcementForm) return;
   if (!announcementForm.reportValidity()) return;
+  const values = Object.fromEntries(new FormData(announcementForm));
   try {
     const response = await post(
       "/admin/announcement",
-      Object.fromEntries(new FormData(announcementForm)),
+      values,
     );
     appendHint(response.hint);
     updateCurrentAnnouncement(response);
     announcementForm.reset();
-    setStatusText(window.translate("js.announcement_sent"));
+    setStatusText(window.translate("js.announcement_sent", { minutes: values.duration_minutes }));
     refreshActions();
   } catch (error) {
     setStatusText(error.message, "error");
@@ -595,6 +598,7 @@ function initHintPresetButton() {
   const hintPresetSearch = document.querySelector("#hint-preset-search");
   const hintCategoryFilter = document.querySelector("#hint-category-filter");
   const noResults = document.querySelector("#hint-preset-no-results");
+  const hintDuration = document.querySelector("#hint-duration");
   if (!sendHintPresetButton || !hintPresetSelect) return;
 
   const filterHintPresets = () => {
@@ -621,11 +625,14 @@ function initHintPresetButton() {
       setStatusText(window.translate("js.select_hint"), "error");
       return;
     }
+    const durationMinutes = hintDuration.value;
     try {
-      const response = await post(`/admin/hints/${presetId}/send`, {});
+      const response = await post(`/admin/hints/${presetId}/send`, {
+        duration_minutes: durationMinutes,
+      });
       appendHint(response.hint);
       updateCurrentAnnouncement(response);
-      setStatusText(window.translate("js.saved_hint_sent"));
+      setStatusText(window.translate("js.saved_hint_sent", { minutes: durationMinutes }));
       refreshActions();
     } catch (error) {
       setStatusText(error.message, "error");

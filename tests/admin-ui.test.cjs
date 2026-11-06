@@ -211,6 +211,157 @@ test("room interaction follows live timer state without clearing manual pause", 
   update({}, "idle", true);
 });
 
+async function adminRoomResultFixture(initial, useStream = true) {
+  const requests = [];
+  const messages = [];
+  const streamEvents = new Map();
+  let latest = initial;
+  const dialog = {
+    open: false, openings: 0,
+    showModal() { this.open = true; this.openings += 1; },
+    close() { this.open = false; },
+  };
+  const element = () => ({
+    textContent: "", dataset: {},
+    addEventListener(name, handler) { this[name] = handler; },
+  });
+  const form = { ...element(), reportValidity: () => true };
+  const completeButton = element();
+  const failButton = element();
+  const completionTime = element();
+  const elements = new Map([
+    ["#completion-dialog", dialog], ["#completion-time", completionTime],
+    ["#completion-form", form], ["#complete-room", completeButton],
+    ["#fail-room", failButton], ["#active-timer-state", element()],
+    ["#active-timer-elapsed", element()], ["#active-timer-remaining", element()],
+  ]);
+  class EventSource {
+    addEventListener(name, handler) { streamEvents.set(name, handler); }
+  }
+  const context = {
+    window: {
+      initialDisplaySettings: initial, csrfToken: "test-csrf",
+      EventSource: useStream ? EventSource : undefined,
+      translate(key, values) {
+        if (values) messages.push({ key, ...values });
+        return key;
+      },
+    },
+    EventSource,
+    FormData: class {
+      *[Symbol.iterator]() {
+        yield* Object.entries({
+          group_name: "Test team", group_size: "4", hints_used: "1", penalties: "0",
+        });
+      }
+    },
+    document: {
+      querySelector: selector => elements.get(selector) || null,
+      querySelectorAll: () => [],
+    },
+    async fetch(path, options) {
+      requests.push({ path, options });
+      return { ok: true, json: async () => path === "/admin/results" ? {} : latest };
+    },
+    setInterval() {},
+  };
+  vm.runInNewContext(readScript("admin-dom.js"), context);
+  vm.runInNewContext(readScript("admin.js"), context);
+  await new Promise(resolve => setImmediate(resolve));
+  return {
+    dialog, completionTime, requests, messages,
+    emit(settings) {
+      latest = settings;
+      streamEvents.get("display")({ data: JSON.stringify(settings) });
+    },
+    async poll(settings) {
+      latest = settings;
+      await vm.runInNewContext("refreshActiveTimer();", context);
+    },
+    async click(action, settings) {
+      latest = settings;
+      await (action === "complete" ? completeButton : failButton).click({ preventDefault() {} });
+    },
+    async save() { await form.submit({ preventDefault() {} }); },
+  };
+}
+
+test("GPIO completion live updates open the result dialog with captured duration and adjustments", async () => {
+  const running = {
+    timer_started_at: startedAt, timer_run_duration_seconds: 600,
+    timer_duration_seconds: 3600, extra_time_seconds: 120, penalty_time_seconds: 60,
+  };
+  const fixture = await adminRoomResultFixture(running);
+  assert.equal(fixture.dialog.openings, 0);
+  fixture.emit({ ...running, room_completed_at: "2026-10-08T12:07:00Z" });
+  assert.equal(fixture.dialog.open, true);
+  assert.equal(fixture.dialog.openings, 1);
+  assert.equal(fixture.completionTime.textContent, "js.completion_time_left");
+  assert.deepEqual(fixture.messages.at(-1), {
+    key: "js.completion_time_left", taken: "08:00", remaining: "04:00",
+  });
+});
+
+test("GPIO completion polling opens the result dialog without an event stream", async () => {
+  const running = { timer_started_at: startedAt };
+  const fixture = await adminRoomResultFixture(running, false);
+  const finished = { ...running, room_completed_at: "2026-10-08T12:10:00Z" };
+  await fixture.poll(finished);
+  assert.equal(fixture.dialog.openings, 1);
+  fixture.dialog.close();
+  await fixture.poll(finished);
+  assert.equal(fixture.dialog.open, false);
+  assert.equal(fixture.dialog.openings, 1);
+});
+
+test("saving GPIO completion stats closes the dialog and repeated updates do not reopen it", async () => {
+  const running = { timer_started_at: startedAt };
+  const fixture = await adminRoomResultFixture(running);
+  const finished = { ...running, room_completed_at: "2026-10-08T12:10:00Z" };
+  fixture.emit(finished);
+  await fixture.save();
+  const saved = fixture.requests.find(request => request.path === "/admin/results");
+  assert.equal(saved.options.method, "POST");
+  assert.equal(saved.options.headers["X-CSRF-Token"], "test-csrf");
+  assert.equal(JSON.parse(saved.options.body).group_name, "Test team");
+  fixture.emit(finished);
+  await fixture.poll(finished);
+  assert.equal(fixture.dialog.open, false);
+  assert.equal(fixture.dialog.openings, 1);
+  fixture.emit({});
+  const nextRun = { timer_started_at: "2026-10-08T13:00:00Z" };
+  fixture.emit(nextRun);
+  fixture.emit({ ...nextRun, room_completed_at: "2026-10-08T13:10:00Z" });
+  assert.equal(fixture.dialog.openings, 2);
+});
+
+test("existing finished rooms do not prompt again when the admin page loads", async () => {
+  for (const field of ["room_completed_at", "room_failed_at"]) {
+    const finished = { timer_started_at: startedAt, [field]: "2026-10-08T12:10:00Z" };
+    const fixture = await adminRoomResultFixture(finished);
+    fixture.emit(finished);
+    await fixture.poll(finished);
+    assert.equal(fixture.dialog.openings, 0);
+  }
+});
+
+test("failure updates and manual finish buttons still open one result dialog", async () => {
+  for (const [action, field] of [
+    ["complete", "room_completed_at"], ["fail", "room_failed_at"],
+  ]) {
+    const running = { timer_started_at: startedAt };
+    const finished = { ...running, [field]: "2026-10-08T12:10:00Z" };
+    const fixture = await adminRoomResultFixture(running);
+    await fixture.click(action, finished);
+    fixture.emit(finished);
+    await fixture.poll(finished);
+    assert.equal(fixture.dialog.openings, 1);
+    const liveFixture = await adminRoomResultFixture(running);
+    liveFixture.emit(finished);
+    assert.equal(liveFixture.dialog.openings, 1);
+  }
+});
+
 function adminTimerActionFixture(initial = {}, latest = initial, confirmed = true) {
   const requests = [];
   const confirmations = [];
@@ -404,6 +555,92 @@ test("leaderboard delete confirmation works on cloned rows after paging and filt
   assert.equal(confirmations.at(-1), "Delete Team 12?");
 });
 
+function adminHintFixture(duration, failure = false) {
+  const requests = [];
+  const messages = [];
+  const element = () => ({
+    dataset: {}, textContent: "",
+    addEventListener(name, handler) { this[name] = handler; },
+  });
+  const select = { value: duration };
+  const form = {
+    ...element(), reportValidity: () => true,
+    reset() { select.value = "2"; },
+  };
+  const button = element();
+  const status = element();
+  const elements = new Map([
+    ["#announcement-form", form], ["#hint-duration", select],
+    ["#hint-preset-select", { value: "7" }], ["#send-hint-preset", button],
+    ["#status", status],
+  ]);
+  const context = {
+    window: {
+      csrfToken: "test-csrf",
+      translate(key, values) {
+        messages.push({ key, ...values });
+        return key;
+      },
+    },
+    document: {
+      querySelector: selector => elements.get(selector) || null,
+      querySelectorAll: () => [],
+    },
+    FormData: class {
+      *[Symbol.iterator]() {
+        yield* Object.entries({ message: "Look under the clock", duration_minutes: select.value });
+      }
+    },
+    async fetch(path, options) {
+      requests.push({ path, options });
+      return {
+        ok: !failure,
+        json: async () => failure ? { error: "Invalid hint duration" } : { hint: {} },
+      };
+    },
+    setInterval() {},
+  };
+  vm.runInNewContext(readScript("admin-dom.js"), context);
+  vm.runInNewContext(readScript("admin.js"), context);
+  return {
+    requests, messages, select, status,
+    async send(saved) {
+      if (saved) await button.click();
+      else {
+        form.submit({ preventDefault() {} });
+        await new Promise(setImmediate);
+      }
+    },
+  };
+}
+
+test("typed and saved hints send the selected duration and report it accurately", async () => {
+  for (const saved of [false, true]) {
+    for (const duration of ["2", "3", "5", "10"]) {
+      const fixture = adminHintFixture(duration);
+      await fixture.send(saved);
+      const request = fixture.requests.find(item => item.options?.method === "POST");
+      assert.equal(request.path, saved ? "/admin/hints/7/send" : "/admin/announcement");
+      assert.equal(JSON.parse(request.options.body).duration_minutes, duration);
+      assert.equal(request.options.headers["X-CSRF-Token"], "test-csrf");
+      assert.deepEqual(fixture.messages.at(-1), {
+        key: saved ? "js.saved_hint_sent" : "js.announcement_sent", minutes: duration,
+      });
+    }
+  }
+});
+
+test("rejected hint durations show an error without resetting the selection or claiming success", async () => {
+  for (const saved of [false, true]) {
+    const fixture = adminHintFixture("5", true);
+    await fixture.send(saved);
+    assert.equal(fixture.select.value, "5");
+    assert.equal(fixture.status.textContent, "Invalid hint duration");
+    assert.equal(fixture.status.dataset.level, "error");
+    assert.equal(fixture.messages.length, 0);
+  }
+});
+
 function homeTimerFixture(duration, now = startedMilliseconds + 600000) {
   const intervals = new Map();
   const timeouts = new Map();
@@ -561,6 +798,21 @@ test("kiosk HTTP fallback applies pause and hints without any live events", asyn
   home.advance(30000);
   home.tick();
   assert.equal(home.timer.textContent, "55:00");
+});
+
+test("a five-minute hint stays visible beyond two minutes and disappears at its deadline", () => {
+  const home = homeTimerFixture(3600);
+  home.update({
+    ...runningDisplay, announcement: "Look under the clock",
+    announcement_expires_at: "2026-10-08T12:15:00Z",
+  });
+  assert.equal(home.announcement.hidden, false);
+  home.advance(120000);
+  home.intervals.get(250)();
+  assert.equal(home.announcement.hidden, false);
+  home.advance(180000);
+  home.intervals.get(250)();
+  assert.equal(home.announcement.hidden, true);
 });
 
 test("a newer live update cannot be overwritten by an older pending HTTP response", async () => {

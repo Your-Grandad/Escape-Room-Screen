@@ -11,6 +11,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import LongTable, Paragraph, SimpleDocTemplate, Spacer, TableStyle
+from werkzeug.utils import secure_filename
 
 if TYPE_CHECKING:
     from .display import DisplaySettingsStore
@@ -28,6 +29,19 @@ def validate_report_dates(start: str, end: str) -> tuple[str | None, str | None]
     if start and end and start > end:
         raise ValueError("Report start date must not be after the end date.")
     return start or None, end or None
+
+
+def result_report_filename(title: str, start: str | None, end: str | None) -> str:
+    room_name = secure_filename("-".join(title.split())) or "room"
+    if start and end:
+        period = f"{start}-to-{end}"
+    elif start:
+        period = f"from-{start}"
+    elif end:
+        period = f"through-{end}"
+    else:
+        period = f"all-time-{datetime.now(timezone.utc):%Y-%m-%d}"
+    return f"{room_name}-{period}.pdf"
 
 
 def create_result_report(

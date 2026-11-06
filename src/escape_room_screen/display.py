@@ -21,7 +21,7 @@ MAX_MESSAGE_LENGTH = 500
 MAX_END_MESSAGE_LENGTH = 200
 TIMER_DURATION_SECONDS = 60 * 60
 MAX_TIMER_DURATION_SECONDS = int(TIMEOUT_MAX)
-ANNOUNCEMENT_DURATION = timedelta(minutes=2)
+ANNOUNCEMENT_DURATION_MINUTES = (2, 3, 5, 10)
 
 
 @dataclass(frozen=True)
@@ -553,7 +553,16 @@ class DisplaySettingsStore:
         media_type: str | None = None,
         media_filename: str | None = None,
         media_full_screen: bool = False,
+        duration_minutes: object = 2,
     ) -> tuple[DisplaySettings, Hint]:
+        if isinstance(duration_minutes, str) and duration_minutes.isdecimal():
+            duration_minutes = int(duration_minutes)
+        if (
+            isinstance(duration_minutes, bool)
+            or not isinstance(duration_minutes, int)
+            or duration_minutes not in ANNOUNCEMENT_DURATION_MINUTES
+        ):
+            raise ValueError("Choose a hint duration of 2, 3, 5, or 10 minutes.")
         if media_type is not None and media_type not in ("image", "video", "audio"):
             raise ValueError("media_type must be 'image', 'video', or 'audio'.")
         if media_type is not None and not media_filename:
@@ -566,7 +575,7 @@ class DisplaySettingsStore:
                 f"Announcement can contain at most {MAX_MESSAGE_LENGTH} characters."
             )
         now = datetime.now(timezone.utc)
-        expires_at = now + ANNOUNCEMENT_DURATION
+        expires_at = now + timedelta(minutes=duration_minutes)
         current_settings = self.get()
         timer_remaining_seconds = current_settings.timer_base_seconds + current_settings.extra_time_seconds
         if current_settings.timer_started_at is not None:

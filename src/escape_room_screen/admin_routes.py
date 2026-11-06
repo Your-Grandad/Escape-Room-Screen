@@ -20,6 +20,7 @@ from flask import (
 )
 from werkzeug.security import check_password_hash, generate_password_hash
 from gpiozero.exc import GPIOZeroError
+from werkzeug.http import dump_options_header
 
 from .database import (
     create_admin_user,
@@ -30,10 +31,11 @@ from .database import (
     update_admin_user_password,
 )
 from .runtime import DisplayRuntime
+from .display import ANNOUNCEMENT_DURATION_MINUTES
 from .localization import translate
 from .screen_layout import default_screen_layout
 from .media import default_media_settings
-from .reports import create_result_report, validate_report_dates
+from .reports import create_result_report, result_report_filename, validate_report_dates
 from .uploads import (
     delete_uploaded_files,
     save_background_image,
@@ -117,6 +119,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             settings=store.get(),
             hints=store.get_hints(),
             hint_presets=hint_presets,
+            hint_duration_minutes=ANNOUNCEMENT_DURATION_MINUTES,
             hint_categories=sorted(
                 {preset.category for preset in hint_presets if preset.category},
                 key=str.casefold,
@@ -467,12 +470,15 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                 request.args.get("start", ""), request.args.get("end", ""),
             )
             entries = store.get_leaderboard(start, end, limit=1001)
-            pdf = create_result_report(store.get().title, entries, start, end)
+            title = store.get().title
+            pdf = create_result_report(title, entries, start, end)
+            filename = result_report_filename(title, start, end)
         except ValueError as error:
             return jsonify(error=str(error)), 400
         return Response(pdf, mimetype="application/pdf", headers={
-            "Content-Disposition": 'attachment; filename="room-results.pdf"',
+            "Content-Disposition": dump_options_header("attachment", {"filename": filename}),
             "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
         })
 
     @app.route("/admin/media", methods=["GET", "POST"])
@@ -682,6 +688,9 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         preset = store.get_hint_preset(preset_id)
         if preset is None:
             return jsonify(error="Hint preset not found."), 404
+        values = request_values()
+        if values is None:
+            return jsonify(error="A JSON announcement object is required."), 400
         media_type = None if preset.kind == "text" else preset.kind
         try:
             settings, hint = store.send_announcement(
@@ -689,6 +698,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                 media_type=media_type,
                 media_filename=preset.media_filename,
                 media_full_screen=preset.full_screen,
+                duration_minutes=values.get("duration_minutes", 2),
             )
         except ValueError as error:
             return jsonify(error=str(error)), 400
@@ -1060,7 +1070,10 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
         if values is None:
             return jsonify(error="A JSON announcement object is required."), 400
         try:
-            settings, hint = store.send_announcement(values.get("message"))
+            settings, hint = store.send_announcement(
+                values.get("message"),
+                duration_minutes=values.get("duration_minutes", 2),
+            )
         except ValueError as error:
             return jsonify(error=str(error)), 400
         runtime.record_action("announcement", f"Sent announcement: {hint.message}")

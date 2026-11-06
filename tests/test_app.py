@@ -2745,6 +2745,79 @@ class HomeScreenTests(unittest.TestCase):
         self.assertIn(b"Timer: 60:00", admin.data)
         self.assertIn(b"Please return to the entrance.", admin.data)
 
+    def test_hint_duration_applies_to_typed_and_saved_hints(self) -> None:
+        csrf_token = self.login()
+        store = self.app.extensions["display_store"]
+        text = store.add_hint_preset("text", "Clue", "Look under the clock", None)
+        image = store.add_hint_preset("image", "Picture", "", "clue.png")
+        now = datetime(2026, 11, 6, 14, 0, tzinfo=timezone.utc)
+        paths = (
+            "/admin/announcement",
+            f"/admin/hints/{text.id}/send",
+            f"/admin/hints/{image.id}/send",
+        )
+        with patch("escape_room_screen.display.datetime", wraps=datetime) as clock:
+            clock.now.return_value = now
+            for path in paths:
+                for minutes in (None, 2, 3, 5, 10):
+                    for encoding in ("json", "form"):
+                        with self.subTest(path=path, minutes=minutes, encoding=encoding):
+                            values: dict[str, object] = {"message": "Look under the clock"}
+                            if minutes is not None:
+                                values["duration_minutes"] = minutes if encoding == "json" else str(minutes)
+                            if encoding == "json":
+                                response = self.client.post(
+                                    path, json=values, headers={"X-CSRF-Token": csrf_token},
+                                )
+                                self.assertEqual(response.status_code, 200)
+                            else:
+                                response = self.client.post(
+                                    path, data={**values, "csrf_token": csrf_token},
+                                )
+                                self.assertEqual(
+                                    response.status_code, 302 if path == "/admin/announcement" else 200,
+                                )
+                            settings = self.client.get("/api/display").get_json()
+                            self.assertEqual(
+                                datetime.fromisoformat(settings["announcement_expires_at"]),
+                                now + timedelta(minutes=minutes or 2),
+                            )
+                            if path == paths[-1]:
+                                self.assertEqual(settings["announcement_media_filename"], "clue.png")
+
+    def test_invalid_hint_duration_preserves_the_active_hint(self) -> None:
+        csrf_token = self.login()
+        store = self.app.extensions["display_store"]
+        preset = store.add_hint_preset("text", "Clue", "New clue", None)
+        store.send_announcement("Keep this hint", duration_minutes=5)
+        settings = store.get()
+        hints = store.get_hints()
+        for path in ("/admin/announcement", f"/admin/hints/{preset.id}/send"):
+            for value in (None, True, 5.0, 0, -1, 4, 11, "", "five", "2.5", [], {}):
+                with self.subTest(path=path, value=value):
+                    response = self.client.post(
+                        path, json={"message": "New clue", "duration_minutes": value},
+                        headers={"X-CSRF-Token": csrf_token},
+                    )
+                    self.assertEqual(response.status_code, 400)
+                    self.assertEqual(
+                        response.get_json()["error"],
+                        "Choose a hint duration of 2, 3, 5, or 10 minutes.",
+                    )
+                    self.assertEqual(store.get(), settings)
+                    self.assertEqual(store.get_hints(), hints)
+
+    def test_hint_duration_selector_defaults_to_two_minutes_in_both_locales(self) -> None:
+        self.login()
+        for locale in ("en", "es"):
+            with self.subTest(locale=locale):
+                page = self.client.get(f"/admin?locale={locale}").data.decode()
+                select = page.split('<select id="hint-duration" name="duration_minutes">', 1)[1].split("</select>", 1)[0]
+                self.assertIn('<option value="2" selected>', select)
+                for minutes in (3, 5, 10):
+                    self.assertIn(f'<option value="{minutes}"', select)
+                self.assertIn("2 minutes" if locale == "en" else "2 minutos", select)
+
     def test_admin_can_cancel_an_active_announcement(self) -> None:
         csrf_token = self.login()
         self.client.post(

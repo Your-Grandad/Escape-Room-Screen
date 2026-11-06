@@ -53,6 +53,10 @@ so admin styling can be adjusted without changing the home screen.
 In the single-column tablet/mobile layout, Room controls and Adjust time
 appear before the announcement and hint panel; desktop keeps its two columns.
 
+The hint panel's **Hint duration** selector applies to typed and saved hints.
+Choose **2, 3, 5, or 10 minutes**, with **2 minutes** selected by default.
+Automatic and GPIO-triggered hints retain the two-minute default.
+
 Customisation stacks the starting duration below Display text, alongside Colours
 and images. Background and logo images have compact previews, including local
 previews of newly selected files before saving.
@@ -73,6 +77,12 @@ and after finishing; reset it before starting another run. Duplicate starts are
 also rejected by the server without changing the current timer or hints.
 **Reset timer** checks the latest state and asks for confirmation while a run
 is in progress (running or paused). Cancelling leaves the run unchanged.
+
+Completing a room from a GPIO input opens the **Room result** dialog on an
+already-open admin control page, just like the **Complete room** button.
+Enter the team details and save to record its statistics. The dialog follows
+live updates, with a five-second polling fallback, and does not reopen for
+repeated updates after being saved or dismissed.
 
 Staff can delete individual entries under **Leaderboard** using the row's
 **Delete** button and confirmation prompt. Deletion is permanent and updates
@@ -212,6 +222,13 @@ counts/rate and the ranked results, including team size, time taken/remaining,
 hints, penalties and finish timestamps. Empty date ranges still produce a
 report. Exports are limited to 1,000 results; choose a narrower range if needed.
 Reports require staff login and use ReportLab, installed by Poetry.
+Downloads use the saved room title and selected dates, for example
+`The-Clockwork-Room-2026-10-01-to-2026-10-12.pdf`. A start-only filter uses
+`from-YYYY-MM-DD`, an end-only filter uses `through-YYYY-MM-DD`, and an
+unfiltered export uses `all-time-YYYY-MM-DD` with the current UTC date.
+Room names are normalized to safe ASCII filenames; accents are transliterated
+and names with no usable filename characters use `room`. The original title
+remains inside the report. Exports disable caching and browser content sniffing.
 
 ## Production on Raspberry Pi (no port in the URL)
 
