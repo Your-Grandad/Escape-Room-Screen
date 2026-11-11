@@ -703,6 +703,70 @@ class HomeScreenTests(unittest.TestCase):
         settings_page.close()
         home_script.close()
 
+    def test_output_resolution_persists_publishes_and_preserves_active_run(self) -> None:
+        csrf = self.login()
+        store = self.app.extensions["display_store"]
+        self.assertEqual(store.get().screen_resolution, "auto")
+        store.start_timer()
+        started_at = store.get().timer_started_at
+        for resolution in ("720", "1080", "1440", "2160", "auto"):
+            with self.subTest(resolution=resolution):
+                with patch.object(self.app.extensions["display_runtime"], "publish_current_settings") as publish:
+                    response = self.client.post(
+                        "/admin/settings",
+                        data={**self.display_settings_values(), "csrf_token": csrf, "screen_resolution": resolution},
+                    )
+                self.assertEqual(response.status_code, 302)
+                publish.assert_called_once()
+                self.assertEqual(self.client.get("/api/display").get_json()["screen_resolution"], resolution)
+                self.assertEqual(DisplaySettingsStore(self.database_path).get().screen_resolution, resolution)
+                self.assertEqual(store.get().timer_started_at, started_at)
+                self.assertIn(
+                    f'<option value="{resolution}" selected>'.encode(),
+                    self.client.get("/admin/settings").data,
+                )
+                self.assertIn(
+                    f'"screen_resolution": "{resolution}"'.encode(),
+                    self.client.get("/?preview=1").data,
+                )
+        store.update({**self.display_settings_values(), "screen_resolution": "720"})
+        initialize(self.database_path)
+        self.client.post("/admin/settings", data={**self.display_settings_values(), "csrf_token": csrf})
+        self.assertEqual(store.get().screen_resolution, "720")
+
+    def test_output_resolution_rejects_invalid_values_and_requires_login_and_csrf(self) -> None:
+        data = {**self.display_settings_values(), "screen_resolution": "720"}
+        self.assertEqual(self.client.post("/admin/settings", data=data).status_code, 401)
+        csrf = self.login()
+        self.assertEqual(self.client.post("/admin/settings", data=data).status_code, 400)
+        store = self.app.extensions["display_store"]
+        before = store.get()
+        for resolution in ("", "480", "720p", "1280x720", "-720", "true"):
+            with self.subTest(resolution=resolution):
+                response = self.client.post(
+                    "/admin/settings", data={**data, "csrf_token": csrf, "screen_resolution": resolution},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn(b"Output resolution must be", response.data)
+                self.assertEqual(store.get(), before)
+        for resolution in (True, 720, 720.0, None, [], {}):
+            with self.subTest(resolution=resolution), self.assertRaises(ValueError):
+                store.update({**self.display_settings_values(), "screen_resolution": resolution})
+        self.assertEqual(store.get(), before)
+
+    def test_output_resolution_migration_preserves_legacy_display_settings(self) -> None:
+        store = self.app.extensions["display_store"]
+        store.start_timer()
+        before = store.get()
+        with closing(connect(self.database_path)) as connection:
+            connection.execute("ALTER TABLE display_settings DROP COLUMN screen_resolution")
+            connection.commit()
+        initialize(self.database_path)
+        initialize(self.database_path)
+        self.assertEqual(store.get(), before)
+        store.update({**self.display_settings_values(), "screen_resolution": "2160"})
+        self.assertEqual(store.get().screen_resolution, "2160")
+
     def test_screen_rotation_saves_all_orientations_and_publishes_persisted_settings(self) -> None:
         csrf = self.login()
         store = self.app.extensions["display_store"]

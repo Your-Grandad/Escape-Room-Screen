@@ -1,4 +1,8 @@
 {
+  "settings.screen_resolution": "Output resolution",
+  "settings.resolution_auto": "Auto - use screen size",
+  "settings.resolution_help": "Choose a player canvas size, then save. The entire output scales to fit the display or live preview without cropping or stretching; different aspect ratios have black bars. Auto uses the browser size. This does not change the Pi desktop or HDMI mode.",
+  "settings.resolution_invalid": "Output resolution must be Auto, 720p, 1080p, 1440p or 4K.",
   "settings.hdmi_rotation": "Raspberry Pi HDMI rotation",
   "settings.hdmi_rotation_help": "Rotates the entire Pi X11 desktop and browser, not just the player page. Apply separately from display settings. Keep player Screen rotation at Normal to avoid rotating twice. The saved HDMI setting is restored at kiosk startup when configured. Touchscreen input is not remapped.",
   "settings.hdmi_rotation_unavailable": "HDMI rotation needs the X11 kiosk setup: xrandr, HDMI_ROTATION_OUTPUT, DISPLAY and permission to access the kiosk X session. See the Raspberry Pi deployment guide. Wayland is not supported.",

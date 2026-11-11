@@ -36,6 +36,14 @@
           </div>
           <section class="utility-section settings-appearance">
             <h2>{{ t("settings.appearance_section") }}</h2>
+            <label>{{ t("settings.screen_resolution") }}
+              <select name="screen_resolution" aria-describedby="screen-resolution-help">
+                {% for resolution, label in (('auto', t('settings.resolution_auto')), ('720', '720p - 1280 x 720'), ('1080', '1080p - 1920 x 1080'), ('1440', '1440p - 2560 x 1440'), ('2160', '4K - 3840 x 2160')) %}
+                  <option value="{{ resolution }}"{% if settings.screen_resolution == resolution %} selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <p id="screen-resolution-help">{{ t("settings.resolution_help") }}</p>
             <label>{{ t("settings.screen_rotation") }}
               <select name="screen_rotation" aria-describedby="screen-rotation-help">
                 {% for rotation in (0, 90, 180, 270) %}

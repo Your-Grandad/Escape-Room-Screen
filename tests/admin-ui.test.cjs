@@ -642,6 +642,8 @@ test("rejected hint durations show an error without resetting the selection or c
 });
 
 function homeTimerFixture(duration, now = startedMilliseconds + 600000) {
+  const outputStyles = new Map();
+  const outputClasses = new Set();
   const intervals = new Map();
   const timeouts = new Map();
   const streamEvents = new Map();
@@ -669,13 +671,25 @@ function homeTimerFixture(duration, now = startedMilliseconds + 600000) {
   const context = {
     window: {
       HomeAudio: { createSoundManager: () => soundManager }, location: { search: "" },
+      innerWidth: 1920, innerHeight: 1080,
       translate: key => key,
       addEventListener(name, handler) { windowEvents.set(name, handler); },
     },
     document: {
       querySelector: getElement,
       addEventListener(name, handler) { documentEvents.set(name, handler); },
-      body: { dataset: {}, style: { setProperty() {} }, classList: { add() {}, remove() {}, toggle() {} } },
+      body: {
+        dataset: {},
+        style: {
+          setProperty(name, value) { outputStyles.set(name, value); },
+          removeProperty(name) { outputStyles.delete(name); },
+        },
+        classList: {
+          add(name) { outputClasses.add(name); },
+          remove(name) { outputClasses.delete(name); },
+          toggle(name, enabled) { enabled ? outputClasses.add(name) : outputClasses.delete(name); },
+        },
+      },
     },
     Date: class extends Date {
       constructor(...args) { super(...(args.length ? args : [clock])); }
@@ -705,7 +719,12 @@ function homeTimerFixture(duration, now = startedMilliseconds + 600000) {
     timer: getElement("#timer"),
     announcement: getElement("#announcement"),
     announcementMessage: getElement("#announcement-message"),
-    requests, warnings, intervals, timeouts,
+    requests, warnings, intervals, timeouts, outputStyles, outputClasses,
+    resize(width, height) {
+      context.window.innerWidth = width;
+      context.window.innerHeight = height;
+      windowEvents.get("resize")();
+    },
     get rotation() { return context.document.body.dataset.screenRotation; },
     get updates() { return updates; },
     update(settings) {
@@ -742,6 +761,36 @@ test("player rotation follows live snapshots and rejects unsupported orientation
   home.update({ ...runningDisplay, screen_rotation: 45 });
   assert.equal(home.rotation, "0");
   assert(home.warnings.some(args => args[0].includes("Invalid screen rotation")));
+});
+
+test("output resolutions fit smaller and larger screens and swap logical axes on rotation", () => {
+  const home = homeTimerFixture(3600);
+  for (const height of [720, 1080, 1440, 2160]) {
+    for (const rotation of [0, 90, 180, 270]) {
+      home.update({ ...runningDisplay, screen_resolution: String(height), screen_rotation: rotation });
+      const quarterTurn = rotation === 90 || rotation === 270;
+      assert(home.outputClasses.has("scaled-output"));
+      assert.equal(home.outputStyles.get("--screen-width"), `${quarterTurn ? height : height * 16 / 9}px`);
+      assert.equal(home.outputStyles.get("--screen-height"), `${quarterTurn ? height * 16 / 9 : height}px`);
+      for (const [width, viewportHeight] of [[1280, 720], [3840, 2160], [800, 600], [600, 800]]) {
+        home.resize(width, viewportHeight);
+        assert.equal(Number(home.outputStyles.get("--screen-scale")), Math.min(width / (height * 16 / 9), viewportHeight / height));
+      }
+    }
+  }
+});
+
+test("Auto and invalid output resolutions restore viewport sizing without stale canvas styles", () => {
+  const home = homeTimerFixture(3600);
+  for (const resolution of ["auto", undefined, "480", 720, null]) {
+    home.update({ ...runningDisplay, screen_resolution: "720", screen_rotation: 90 });
+    home.update({ ...runningDisplay, screen_resolution: resolution, screen_rotation: 0 });
+    assert(!home.outputClasses.has("scaled-output"));
+    for (const property of ["--screen-width", "--screen-height", "--screen-width-unit", "--screen-height-unit", "--screen-scale"]) {
+      assert(!home.outputStyles.has(property));
+    }
+  }
+  assert(home.warnings.some(args => args[0].includes("Invalid output resolution")));
 });
 
 test("room display retains current run duration and picks up the next idle duration", () => {

@@ -92,6 +92,14 @@ not on the player screen.
 
 ### Screen layout editor
 
+Choose **Settings > Customisation > Output resolution** for **720p, 1080p,
+1440p or 4K**, then save. The player canvas scales uniformly to fit the connected
+screen and live preview, including hints, videos and result screens. Different
+aspect ratios have black bars rather than cropping or stretching. **Auto** (the
+default) uses the browser size and preserves the original behaviour. The choice
+persists across restarts and works with screen rotation; it does not change the
+Pi desktop or physical HDMI mode.
+
 For a sideways or upside-down TV, choose **Settings > Customisation >
 Screen rotation** (0, 90, 180 or 270 degrees), then save. The player screen and
 live preview rotate immediately, including backgrounds, hints, briefings and

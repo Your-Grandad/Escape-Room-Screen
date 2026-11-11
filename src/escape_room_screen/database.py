@@ -215,6 +215,7 @@ def initialize(database_path: Path | str) -> None:
             )
         for column in (
             "screen_rotation INTEGER NOT NULL DEFAULT 0 CHECK (screen_rotation IN (0, 90, 180, 270))",
+            "screen_resolution TEXT NOT NULL DEFAULT 'auto' CHECK (screen_resolution IN ('auto', '720', '1080', '1440', '2160'))",
             "timer_started_at TEXT",
             "timer_paused_at TEXT",
             "timer_duration_seconds INTEGER NOT NULL DEFAULT 3600 CHECK (timer_duration_seconds > 0)",

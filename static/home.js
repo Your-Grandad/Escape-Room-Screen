@@ -38,6 +38,28 @@ let previousRoomComplete = null;
 let previousRoomFailed = null;
 const forceDefaultLayout = new URLSearchParams(window.location.search).get("layout") === "default";
 let warnedAboutMissingLayout = false;
+let screenResolution = "auto";
+
+function resizeOutput() {
+  const height = Number(screenResolution);
+  const properties = ["--screen-width", "--screen-height", "--screen-width-unit", "--screen-height-unit", "--screen-scale"];
+  document.body.classList.toggle("scaled-output", screenResolution !== "auto");
+  if (screenResolution === "auto") {
+    for (const property of properties) document.body.style.removeProperty(property);
+    return;
+  }
+  const width = height * 16 / 9;
+  const quarterTurn = ["90", "270"].includes(document.body.dataset.screenRotation);
+  const logicalWidth = quarterTurn ? height : width;
+  const logicalHeight = quarterTurn ? width : height;
+  document.body.style.setProperty("--screen-width", `${logicalWidth}px`);
+  document.body.style.setProperty("--screen-height", `${logicalHeight}px`);
+  document.body.style.setProperty("--screen-width-unit", `${logicalWidth / 100}px`);
+  document.body.style.setProperty("--screen-height-unit", `${logicalHeight / 100}px`);
+  document.body.style.setProperty("--screen-scale", String(Math.min(window.innerWidth / width, window.innerHeight / height)));
+}
+
+window.addEventListener("resize", resizeOutput);
 
 function updateDisplay(settings) {
   const rotation = settings.screen_rotation ?? 0;
@@ -45,6 +67,12 @@ function updateDisplay(settings) {
     console.warn("Invalid screen rotation; using normal orientation.", rotation);
   }
   document.body.dataset.screenRotation = String([0, 90, 180, 270].includes(rotation) ? rotation : 0);
+  screenResolution = settings.screen_resolution ?? "auto";
+  if (!["auto", "720", "1080", "1440", "2160"].includes(screenResolution)) {
+    console.warn("Invalid output resolution; using browser size.", screenResolution);
+    screenResolution = "auto";
+  }
+  resizeOutput();
   const briefingActive = mediaManager?.update(settings);
   if (window.ScreenLayout) {
     window.ScreenLayout.apply(document.body, settings, { forceDefault: forceDefaultLayout });

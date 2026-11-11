@@ -31,7 +31,7 @@ from .database import (
     update_admin_user_password,
 )
 from .runtime import DisplayRuntime
-from .display import ANNOUNCEMENT_DURATION_MINUTES
+from .display import ANNOUNCEMENT_DURATION_MINUTES, SCREEN_RESOLUTIONS
 from .localization import translate
 from .screen_layout import default_screen_layout
 from .media import default_media_settings
@@ -325,6 +325,11 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
                     if rotation not in ("0", "90", "180", "270"):
                         raise ValueError(translate(g.locale, "settings.rotation_invalid"))
                     display_values["screen_rotation"] = int(rotation)
+                if "screen_resolution" in request.form:
+                    resolution = request.form["screen_resolution"]
+                    if resolution not in SCREEN_RESOLUTIONS:
+                        raise ValueError(translate(g.locale, "settings.resolution_invalid"))
+                    display_values["screen_resolution"] = resolution
                 duration_fields = ("timer_hours", "timer_minutes", "timer_seconds")
                 if any(name in request.form for name in duration_fields):
                     display_values["timer_duration_seconds"] = store.parse_timer_duration(

@@ -17,6 +17,7 @@ html.player-screen {
 }
 
 .home-screen {
+  --screen-rotation: 0deg;
   --screen-width-unit: 1vw;
   --screen-height-unit: 1vh;
   --screen-width: 100vw;
@@ -51,6 +52,16 @@ html.player-screen {
   position: fixed !important;
   top: 50%;
   transform: translate(-50%, -50%) rotate(var(--screen-rotation));
+  width: var(--screen-width);
+}
+
+.home-screen.scaled-output {
+  height: var(--screen-height);
+  left: 50%;
+  overflow: hidden;
+  position: fixed !important;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(var(--screen-rotation)) scale(var(--screen-scale));
   width: var(--screen-width);
 }
 

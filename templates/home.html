@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("home.page_title") }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='8') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen.css', v='9') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='screen-layout.css', v='2') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='home-media.css', v='1') }}">
   </head>
@@ -42,6 +42,6 @@
     <script src="{{ url_for('static', filename='home-media.js', v='2') }}"></script>
     <script src="{{ url_for('static', filename='screen-layout.js', v='1') }}"></script>
     <script>window.initialDisplaySettings = {{ settings.to_dict()|tojson }};</script>
-    <script src="{{ url_for('static', filename='home.js', v='10') }}"></script>
+    <script src="{{ url_for('static', filename='home.js', v='11') }}"></script>
   </body>
 </html>
