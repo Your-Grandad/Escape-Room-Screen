@@ -33,7 +33,7 @@ from .database import (
 from .runtime import DisplayRuntime
 from .display import ANNOUNCEMENT_DURATION_MINUTES, SCREEN_RESOLUTIONS
 from .localization import translate
-from .screen_layout import default_screen_layout
+from .screen_layout import default_result_layouts, default_screen_layout
 from .media import default_media_settings
 from .reports import create_result_report, result_report_filename, validate_report_dates
 from .uploads import (
@@ -581,6 +581,7 @@ def register_admin_routes(app: Flask, runtime: DisplayRuntime) -> None:
             "screen_layout.html",
             settings=store.get(),
             default_layout=default_screen_layout(),
+            default_result_layouts=default_result_layouts(),
             layout_disabled=app.config["DISABLE_CUSTOM_LAYOUT"],
             csrf_token=csrf_token(),
         )

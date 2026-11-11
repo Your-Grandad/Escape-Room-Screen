@@ -126,8 +126,16 @@ and keyboard editing remain available if pointer dragging is unsupported.
 
 Choose stacked media/text, side-by-side, text-only, or media-only hints.
 Text-only hints still show their text in media-only mode, and media hints
-without captions remain visible in text-only mode. Fullscreen hints and
-completion/failure screens retain their original presentation.
+without captions remain visible in text-only mode. Fullscreen hints retain
+their original presentation.
+
+Use **Screen to edit** to switch between **Normal screen**, **Room completed**
+and **Room failed**. Each has independent block positions, sizes, alignment and
+visibility. End screens support the header, result message, logo and stopped timer;
+their messages still come from Customisation and their green/red colours remain.
+Switching screens keeps unsaved edits; saving publishes all three designs.
+Reset preview positions resets only the selected screen. Existing saved layouts
+keep the original end screens until saved through the updated editor.
 
 Edits stay in the local preview until **Save and apply layout** publishes them
 to the player screen. **Cancel edits** restores the last saved design.

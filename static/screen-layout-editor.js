@@ -8,6 +8,7 @@
   const cancelButton = document.querySelector("#layout-cancel");
   const resetButton = document.querySelector("#layout-reset-draft");
   const select = document.querySelector("#layout-element");
+  const screenSelect = document.querySelector("#layout-screen");
   const hintMode = document.querySelector("#layout-hint-mode");
   const previewHint = document.querySelector("#layout-preview-hint");
   const snap = document.querySelector("#layout-snap");
@@ -16,8 +17,13 @@
   const blocks = [...stage.querySelectorAll("[data-layout-element]")];
   const translate = key => config.translations[`layout.${key}`] || key;
   const clone = value => JSON.parse(JSON.stringify(value));
-  let saved = clone(config.layout || config.defaultLayout);
+  const withResults = layout => ({
+    ...clone(layout),
+    result_layouts: clone(layout.result_layouts || config.defaultResultLayouts),
+  });
+  let saved = withResults(config.layout || config.defaultLayout);
   let draft = clone(saved);
+  let screen = "normal";
   let selected = "title";
   let pending = false;
   let drag = null;
@@ -34,17 +40,31 @@
 
   function setPending(value) {
     pending = value;
-    [saveButton, cancelButton, resetButton, select, hintMode, previewHint, snap, handle, ...fields]
+    [saveButton, cancelButton, resetButton, select, screenSelect, hintMode, previewHint, snap, handle, ...fields]
       .forEach(control => { control.disabled = value; });
   }
 
+  function currentDesign(layout = draft) {
+    return screen === "normal" ? layout : layout.result_layouts[screen];
+  }
+
   function render() {
-    const result = engine.apply(stage, { screen_layout: draft, screen_layout_enabled: true });
+    const result = engine.apply(stage, { screen_layout: draft, screen_layout_enabled: true }, { screen });
     if (!result.active) throw new Error(result.error || translate("unavailable"));
+    stage.classList.toggle("room-complete", screen === "complete");
+    stage.classList.toggle("room-failed", screen === "failed");
+    stage.querySelector('[data-layout-element="message"]').textContent = config.messages[screen];
+    screenSelect.value = screen;
+    const normal = screen === "normal";
+    blocks.forEach(element => {
+      element.hidden = !normal && element.dataset.layoutElement === "hints";
+    });
+    for (const option of select.options) option.hidden = !normal && option.value === "hints";
+    document.querySelectorAll("[data-normal-screen-control]").forEach(element => { element.hidden = !normal; });
     stage.style.setProperty("--screen-height-unit", `${stage.getBoundingClientRect().height / 100}px`);
     select.value = selected;
     hintMode.value = draft.hint_layout;
-    const block = draft.elements[selected];
+    const block = currentDesign().elements[selected];
     fields.forEach(field => {
       const key = field.dataset.layoutProperty;
       if (key === "visible") field.checked = block.visible;
@@ -75,14 +95,14 @@
       block.x = bounded(rounded(original.x + dx), 0, 100 - original.width);
       block.y = bounded(rounded(original.y + dy), 0, 100 - original.height);
     }
-    draft.elements[name] = block;
+    currentDesign().elements[name] = block;
   }
 
   function finishDrag(cancelled = false) {
     if (!drag) return;
     const current = drag;
     drag = null;
-    if (cancelled) draft.elements[current.name] = current.original;
+    if (cancelled) currentDesign().elements[current.name] = current.original;
     if (frame !== null) cancelAnimationFrame(frame);
     frame = null;
     render();
@@ -101,6 +121,12 @@
   }
 
   select.addEventListener("change", () => { selected = select.value; render(); });
+  screenSelect.addEventListener("change", () => {
+    finishDrag();
+    screen = screenSelect.value;
+    selected = "message";
+    render();
+  });
   blocks.forEach(block => {
     block.addEventListener("focus", () => { selected = block.dataset.layoutElement; render(); });
   });
@@ -112,7 +138,7 @@
         if (key !== "visible" && key !== "align" && field.value.trim() === "") {
           throw new Error(translate("invalid"));
         }
-        next.elements[selected][key] = key === "visible" ? field.checked
+        currentDesign(next).elements[selected][key] = key === "visible" ? field.checked
           : key === "align" ? field.value : Number(field.value);
         engine.validate(next);
         draft = next;
@@ -143,7 +169,7 @@
     if (!direction || pending) return;
     event.preventDefault();
     const step = event.shiftKey ? 10 : snap.checked ? 2 : 1;
-    changeGeometry(draft.elements[selected], direction[0] * step, direction[1] * step, event.target === handle);
+    changeGeometry(currentDesign().elements[selected], direction[0] * step, direction[1] * step, event.target === handle);
     render();
     setStatus(translate("unsaved"));
   });
@@ -159,7 +185,7 @@
       render();
       const rect = stage.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return;
-      drag = { id: event.pointerId, name: selected, x: event.clientX, y: event.clientY, rect, original: { ...draft.elements[selected] }, resize: Boolean(resizing) };
+      drag = { id: event.pointerId, name: selected, x: event.clientX, y: event.clientY, rect, original: { ...currentDesign().elements[selected] }, resize: Boolean(resizing) };
       try { stage.setPointerCapture(event.pointerId); } catch (error) {
         drag = null;
         setStatus(`${translate("pointer_fallback")} ${error.message}`, "error");
@@ -205,7 +231,12 @@
   resetButton.addEventListener("click", () => {
     if (pending) return;
     finishDrag(true);
-    draft = clone(config.defaultLayout);
+    if (screen === "normal") {
+      draft.elements = clone(config.defaultLayout.elements);
+      draft.hint_layout = config.defaultLayout.hint_layout;
+    } else {
+      draft.result_layouts[screen] = clone(config.defaultResultLayouts[screen]);
+    }
     render();
     setStatus(translate("unsaved"));
   });

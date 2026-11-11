@@ -21,6 +21,13 @@ const defaultLayout = () => {
     },
   };
 };
+const resultLayouts = () => Object.fromEntries(["complete", "failed"].map(name => {
+  const { elements } = defaultLayout();
+  delete elements.hints;
+  Object.values(elements).forEach(element => { element.visible = false; });
+  Object.assign(elements.message, { x: 5, y: 35, width: 90, height: 30, font_size: 8, visible: true });
+  return [name, { elements }];
+}));
 
 test("dashed box guides are scoped to the editor, not the player screen", () => {
   const css = script("screen-layout-editor.css");
@@ -81,8 +88,10 @@ function fixture({ pointer = true, stylesAvailable = true, editor = false } = {}
     ["#screen-layout-stage", stage],
     ...["layout-status", "layout-save", "layout-cancel", "layout-reset-draft", "layout-element",
       "layout-hint-mode", "layout-preview-hint", "layout-snap", "layout-resize-handle",
-      "layout-current-state"].map(name => [`#${name}`, element()]),
+      "layout-current-state", "layout-screen"].map(name => [`#${name}`, element()]),
   ]);
+  elements.get("#layout-element").options = Object.keys(defaultLayout().elements).map(value => ({ value }));
+  const normalControls = [element(), element()];
   elements.get("#layout-snap").checked = true;
   elements.get("#layout-resize-handle").dataset.layoutResize = true;
   const frames = new Map();
@@ -98,12 +107,16 @@ function fixture({ pointer = true, stylesAvailable = true, editor = false } = {}
   const context = {
     window: {
       PointerEvent: pointer ? class {} : undefined, csrfToken: "test-csrf",
-      screenLayoutEditor: { defaultLayout: defaultLayout(), layout: null, translations },
+      screenLayoutEditor: {
+        defaultLayout: defaultLayout(), defaultResultLayouts: resultLayouts(),
+        messages: { normal: "Welcome", complete: "Congratulations!", failed: "Room failed" },
+        layout: null, translations,
+      },
       addEventListener(name, handler) { windowEvents.set(name, handler); },
     },
     document: {
       querySelector: selector => elements.get(selector),
-      querySelectorAll: () => fields,
+      querySelectorAll: selector => selector === "[data-layout-property]" ? fields : normalControls,
     },
     getComputedStyle: () => ({ getPropertyValue: () => stylesAvailable ? "1" : "" }),
     requestAnimationFrame(handler) { const id = ++sequence; frames.set(id, handler); return id; },
@@ -122,7 +135,7 @@ function fixture({ pointer = true, stylesAvailable = true, editor = false } = {}
   if (editor) vm.runInContext(script("screen-layout-editor.js"), context);
   return {
     context, stage, blocks, fields, elements, frames, timeouts, warnings, requests,
-    caption, media, windowEvents,
+    caption, media, windowEvents, normalControls,
     engine: context.window.ScreenLayout,
     apply(layout, enabled = true, options) {
       return context.window.ScreenLayout.apply(stage, { screen_layout: layout, screen_layout_enabled: enabled }, options);
@@ -134,6 +147,10 @@ function fixture({ pointer = true, stylesAvailable = true, editor = false } = {}
     },
     field(name) { return fields.find(field => field.dataset.layoutProperty === name); },
     control(name) { return elements.get(`#layout-${name}`); },
+    screen(name) {
+      elements.get("#layout-screen").value = name;
+      elements.get("#layout-screen").emit("change");
+    },
     move(name, dx, dy, resize = false) {
       if (resize) elements.get("#layout-element").value = name;
       if (resize) elements.get("#layout-element").emit("change");
@@ -160,6 +177,96 @@ test("valid layouts apply bounded percentages, visibility, and hint arrangement"
   assert.equal(f.stage.classList.contains("custom-layout"), false);
   assert.equal(f.blocks.get("logo").dataset.layoutHidden, undefined);
   assert.equal(f.blocks.get("title").styles.size, 0);
+});
+
+test("result layouts switch independently on completion, failure and reset", () => {
+  const f = fixture();
+  const layout = { ...defaultLayout(), result_layouts: resultLayouts() };
+  layout.result_layouts.complete.elements.message.x = 2;
+  layout.result_layouts.failed.elements.message.x = 8;
+  layout.result_layouts.complete.elements.timer.visible = true;
+  const settings = { screen_layout: layout, screen_layout_enabled: true };
+  const apply = values => f.engine.apply(f.stage, { ...settings, ...values });
+  assert.equal(apply({}).active, true);
+  assert.equal(f.blocks.get("message").styles.get("--layout-x"), "10%");
+  assert.equal(apply({ room_completed_at: "finished" }).active, true);
+  assert.equal(f.blocks.get("message").styles.get("--layout-x"), "2%");
+  assert.equal(f.blocks.get("timer").dataset.layoutHidden, "false");
+  assert.equal(f.blocks.get("hints").styles.size, 0);
+  assert.equal(apply({ room_failed_at: "failed" }).active, true);
+  assert.equal(f.blocks.get("message").styles.get("--layout-x"), "8%");
+  assert.equal(f.blocks.get("timer").dataset.layoutHidden, "true");
+  apply({});
+  assert.equal(f.blocks.get("message").styles.get("--layout-x"), "10%");
+  assert.equal(f.blocks.get("timer").dataset.layoutHidden, "false");
+});
+
+test("legacy layouts keep original end screens and overrides disable result designs", () => {
+  const f = fixture();
+  f.apply(defaultLayout());
+  const settings = { screen_layout: defaultLayout(), screen_layout_enabled: true, room_completed_at: "finished" };
+  assert.equal(f.engine.apply(f.stage, settings).active, false);
+  assert.equal(f.blocks.get("message").styles.size, 0);
+  settings.screen_layout.result_layouts = resultLayouts();
+  assert.equal(f.engine.apply(f.stage, settings).active, true);
+  assert.equal(f.engine.apply(f.stage, settings, { forceDefault: true }).active, false);
+  assert.equal(f.blocks.get("message").styles.size, 0);
+});
+
+test("invalid result layouts fall back instead of applying partial designs", () => {
+  const f = fixture();
+  for (const mutate of [
+    results => { delete results.failed; },
+    results => { results.complete.elements.message.width = 100; },
+    results => { results.failed.elements.logo.visible = "yes"; },
+    results => { results.failed.extra = true; },
+    results => { results.failed.elements.hints = defaultLayout().elements.hints; },
+  ]) {
+    const layout = { ...defaultLayout(), result_layouts: resultLayouts() };
+    mutate(layout.result_layouts);
+    assert.equal(f.apply(layout).active, false);
+    assert.equal(f.stage.classList.contains("custom-layout"), false);
+  }
+});
+
+test("editor retains separate drafts, resets only selected screen and saves all screens", async () => {
+  const f = fixture({ editor: true });
+  f.field("x").value = "24";
+  f.field("x").emit("change");
+  f.screen("complete");
+  assert.equal(f.blocks.get("message").textContent, "Congratulations!");
+  assert.equal(f.stage.classList.contains("room-complete"), true);
+  assert.equal(f.blocks.get("hints").hidden, true);
+  assert.equal(f.control("element").options.find(option => option.value === "hints").hidden, true);
+  assert.equal(f.normalControls.every(element => element.hidden), true);
+  f.field("x").value = "8";
+  f.field("x").emit("change");
+  f.screen("failed");
+  assert.equal(f.blocks.get("message").textContent, "Room failed");
+  f.field("y").value = "40";
+  f.field("y").emit("change");
+  f.control("reset-draft").emit("click");
+  assert.equal(f.field("y").value, "35");
+  f.screen("complete");
+  assert.equal(f.field("x").value, "8");
+  await f.control("save").emit("click");
+  const layout = JSON.parse(f.requests[0].options.body).layout;
+  assert.equal(layout.elements.title.x, 24);
+  assert.equal(layout.result_layouts.complete.elements.message.x, 8);
+  assert.equal(layout.result_layouts.failed.elements.message.y, 35);
+  f.field("x").value = "10";
+  f.field("x").emit("change");
+  f.control("cancel").emit("click");
+  assert.equal(f.field("x").value, "8");
+  f.screen("normal");
+  assert.equal(f.blocks.get("hints").hidden, false);
+  assert.equal(f.normalControls.some(element => element.hidden), false);
+  f.control("element").value = "title";
+  f.control("element").emit("change");
+  assert.equal(f.field("x").value, "24");
+  f.control("reset-draft").emit("click");
+  f.screen("complete");
+  assert.equal(f.field("x").value, "8");
 });
 
 test("unsupported layouts and missing CSS fall back visibly in logs without stale positioning", () => {

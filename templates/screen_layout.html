@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ t("layout.title") }}</title>
     {% include "includes/admin_theme_head.html" %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='screen-layout.css', v='1') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='screen-layout-editor.css', v='1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen-layout.css', v='3') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='screen-layout-editor.css', v='2') }}">
   </head>
   <body class="admin-page">
     <main class="panel">
@@ -18,6 +18,13 @@
       {% if settings.screen_layout_error %}<p class="error">{{ t("layout.stored_error") }}</p>{% endif %}
       {% if layout_disabled %}<p class="error">{{ t("layout.server_disabled") }}</p>{% endif %}
       <noscript><p class="error">{{ t("layout.no_script") }}</p></noscript>
+      <label>{{ t("layout.screen") }}
+        <select id="layout-screen">
+          <option value="normal">{{ t("layout.normal_screen") }}</option>
+          <option value="complete">{{ t("layout.complete_screen") }}</option>
+          <option value="failed">{{ t("layout.failed_screen") }}</option>
+        </select>
+      </label>
       <div class="screen-layout-editor">
         <section aria-label="{{ t('layout.preview') }}">
           <div id="screen-layout-stage" class="home-screen screen-layout-stage" style="--background-colour: {{ settings.background_colour }}; --accent-colour: {{ settings.accent_colour }}">
@@ -36,7 +43,7 @@
             <button id="layout-resize-handle" type="button" data-layout-resize aria-label="{{ t('layout.resize') }}"></button>
           </div>
           <p>{{ t("layout.keyboard_help") }}</p>
-          <label>{{ t("layout.preview_hint") }}
+          <label data-normal-screen-control>{{ t("layout.preview_hint") }}
             <select id="layout-preview-hint">
               <option value="combined">{{ t("layout.combined") }}</option>
               <option value="text">{{ t("layout.text_only") }}</option>
@@ -64,7 +71,7 @@
           </label>
           <label><input data-layout-property="visible" type="checkbox"> {{ t("layout.visible") }}</label>
           <label><input id="layout-snap" type="checkbox" checked> {{ t("layout.snap") }}</label>
-          <label>{{ t("layout.hint_layout") }}
+          <label data-normal-screen-control>{{ t("layout.hint_layout") }}
             <select id="layout-hint-mode">
               <option value="stacked">{{ t("layout.stacked") }}</option>
               <option value="side-by-side">{{ t("layout.side_by_side") }}</option>
@@ -72,7 +79,7 @@
               <option value="media-only">{{ t("layout.media_only") }}</option>
             </select>
           </label>
-          <p>{{ t("layout.hint_fallback") }}</p>
+          <p data-normal-screen-control>{{ t("layout.hint_fallback") }}</p>
         </section>
       </div>
       <div class="form-actions">
@@ -88,8 +95,8 @@
       {% include "includes/donate_widget.html" %}
     </main>
     {% include "includes/admin_scripts.html" %}
-    <script>window.screenLayoutEditor = {{ {"layout": settings.screen_layout, "defaultLayout": default_layout, "enabled": settings.screen_layout_enabled, "serverDisabled": layout_disabled, "translations": client_translations("layout")}|tojson }};</script>
-    <script src="{{ url_for('static', filename='screen-layout.js', v='1') }}"></script>
-    <script src="{{ url_for('static', filename='screen-layout-editor.js', v='1') }}"></script>
+    <script>window.screenLayoutEditor = {{ {"layout": settings.screen_layout, "defaultLayout": default_layout, "defaultResultLayouts": default_result_layouts, "messages": {"normal": settings.message, "complete": settings.completion_message, "failed": settings.failure_message}, "enabled": settings.screen_layout_enabled, "serverDisabled": layout_disabled, "translations": client_translations("layout")}|tojson }};</script>
+    <script src="{{ url_for('static', filename='screen-layout.js', v='2') }}"></script>
+    <script src="{{ url_for('static', filename='screen-layout-editor.js', v='2') }}"></script>
   </body>
 </html>

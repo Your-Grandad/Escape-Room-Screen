@@ -17,7 +17,7 @@ from escape_room_screen.database import connect, initialize
 from escape_room_screen.display import DisplaySettingsStore, MAX_TIMER_DURATION_SECONDS
 from escape_room_screen.events import DisplayUpdateBroker
 from escape_room_screen.gpio import GpioController
-from escape_room_screen.screen_layout import default_screen_layout
+from escape_room_screen.screen_layout import default_result_layouts, default_screen_layout
 
 
 class FakeOutputGpioController:
@@ -162,6 +162,9 @@ class HomeScreenTests(unittest.TestCase):
         self.assertIn(b"Screen editor", page.data)
         self.assertIn(b'aria-label="Header"', page.data)
         self.assertIn(b'id="layout-save"', page.data)
+        self.assertIn(b'id="layout-screen"', page.data)
+        self.assertIn(b'<option value="complete">Room completed</option>', page.data)
+        self.assertIn(b'<option value="failed">Room failed</option>', page.data)
         self.assertIn(b'action="/admin/screen-layout/default"', page.data)
         for tag in (b"<video", b"<audio", b"<img"):
             self.assertNotIn(tag, page.data)
@@ -241,6 +244,61 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(store.get().screen_layout, layout)
         self.assertFalse(store.get().screen_layout_enabled)
         self.assertFalse(self.client.get("/api/display").get_json()["screen_layout_enabled"])
+
+    def test_result_screen_layouts_persist_and_publish_without_changing_room(self) -> None:
+        csrf = self.login()
+        store = self.app.extensions["display_store"]
+        store.start_timer()
+        store.complete_room()
+        before = store.get().to_dict()
+        layout = default_screen_layout()
+        layout["result_layouts"] = default_result_layouts()
+        layout["result_layouts"]["complete"]["elements"]["message"]["x"] = 2
+        layout["result_layouts"]["failed"]["elements"]["timer"]["visible"] = True
+        response = self.client.post(
+            "/admin/screen-layout", json={"layout": layout, "enabled": True},
+            headers={"X-CSRF-Token": csrf},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["screen_layout"], layout)
+        self.assertEqual(DisplaySettingsStore(self.database_path).get().screen_layout, layout)
+        snapshot = self.client.get("/api/display").get_json()
+        self.assertEqual(snapshot["screen_layout"], layout)
+        for key, value in before.items():
+            if not key.startswith("screen_layout"):
+                self.assertEqual(store.get().to_dict()[key], value)
+        self.assertLess(len(json.dumps({"layout": layout, "enabled": True})), 8192)
+        self.client.post("/admin/screen-layout/default", data={"csrf_token": csrf})
+        self.assertEqual(store.get().screen_layout, layout)
+        self.assertFalse(store.get().screen_layout_enabled)
+
+    def test_result_screen_layout_validation_preserves_saved_design_on_errors(self) -> None:
+        csrf = self.login()
+        store = self.app.extensions["display_store"]
+        layout = default_screen_layout()
+        layout["result_layouts"] = default_result_layouts()
+        store.save_screen_layout(layout, True)
+        invalid_results = [None, [], {}, {"complete": layout["result_layouts"]["complete"]}]
+        for screen, key, value in (
+            ("complete", "x", 99), ("failed", "visible", "true"),
+            ("complete", "font_size", float("inf")), ("failed", "align", "invalid"),
+        ):
+            results = deepcopy(layout["result_layouts"])
+            results[screen]["elements"]["message"][key] = value
+            invalid_results.append(results)
+        extra = deepcopy(layout["result_layouts"])
+        extra["complete"]["css"] = "invalid"
+        invalid_results.append(extra)
+        for results in invalid_results:
+            with self.subTest(results=results):
+                response = self.client.post(
+                    "/admin/screen-layout",
+                    json={"layout": {**layout, "result_layouts": results}, "enabled": True},
+                    headers={"X-CSRF-Token": csrf},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("error", response.get_json())
+                self.assertEqual(store.get().screen_layout, layout)
 
     def test_screen_layout_routes_require_admin_and_csrf(self) -> None:
         payload = {"layout": default_screen_layout(), "enabled": True}
@@ -404,7 +462,7 @@ class HomeScreenTests(unittest.TestCase):
             self.assertNotIn(b"/static/admin.css", response.data)
             self.assertLess(
                 response.data.index(b'id="admin-theme-initializer"'),
-                response.data.index(b"/static/screen.css?v=7"),
+                response.data.index(b"/static/screen.css?v=10"),
             )
             self.assertLess(
                 response.data.index(b'id="admin-stylesheet"'),

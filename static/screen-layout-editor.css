@@ -10,7 +10,7 @@
 }
 
 .admin-page .screen-layout-stage,
-.admin-page .screen-layout-stage.custom-layout:not(.room-complete):not(.room-failed) {
+.admin-page .screen-layout-stage.custom-layout {
   border: 1px solid currentColor;
   color: #f8fafc;
   display: block;
@@ -63,6 +63,21 @@
 
 .screen-layout-stage [hidden] {
   display: none !important;
+}
+
+.screen-layout-stage.room-complete {
+  --background-colour: #166534 !important;
+  --accent-colour: #ffffff !important;
+}
+
+.screen-layout-stage.room-failed {
+  --background-colour: #991b1b !important;
+  --accent-colour: #ffffff !important;
+}
+
+.screen-layout-stage.room-complete [data-layout-element="message"],
+.screen-layout-stage.room-failed [data-layout-element="message"] {
+  font-weight: 800;
 }
 
 .admin-page #layout-resize-handle {

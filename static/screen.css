@@ -164,8 +164,8 @@ html.player-screen {
   opacity: .5;
 }
 
-.home-screen.room-complete main > :not(#message),
-.home-screen.room-failed main > :not(#message),
+.home-screen.room-complete:not(.custom-layout) main > :not(#message),
+.home-screen.room-failed:not(.custom-layout) main > :not(#message),
 .home-screen.room-complete .announcement,
 .home-screen.room-failed .announcement,
 .home-screen.room-complete .gpio-activity,
@@ -173,8 +173,8 @@ html.player-screen {
   display: none !important;
 }
 
-.home-screen.room-complete #message,
-.home-screen.room-failed #message {
+.home-screen.room-complete:not(.custom-layout) #message,
+.home-screen.room-failed:not(.custom-layout) #message {
   font-size: clamp(3rem, calc(8 * var(--screen-width-unit)), 8rem);
   font-weight: 800;
   left: 50%;

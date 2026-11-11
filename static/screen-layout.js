@@ -7,13 +7,34 @@
 
   function validate(layout) {
     if (!layout || typeof layout !== "object" || Array.isArray(layout)
-      || Object.keys(layout).sort().join(",") !== "elements,hint_layout,version"
+      || !["elements,hint_layout,version", "elements,hint_layout,result_layouts,version"]
+        .includes(Object.keys(layout).sort().join(","))
       || layout.version !== 1 || !modes.includes(layout.hint_layout)
-      || !layout.elements || Object.keys(layout.elements).sort().join(",") !== [...names].sort().join(",")) {
+      || !layout.elements) {
       throw new Error("Invalid screen layout.");
     }
-    for (const name of names) {
-      const element = layout.elements[name];
+    validateElements(layout.elements, names);
+    if (Object.hasOwn(layout, "result_layouts")) {
+      const results = layout.result_layouts;
+      if (!results || Object.keys(results).sort().join(",") !== "complete,failed") {
+        throw new Error("Invalid result layouts.");
+      }
+      for (const name of ["complete", "failed"]) {
+        if (!results[name] || Object.keys(results[name]).join(",") !== "elements") {
+          throw new Error(`Invalid result layout: ${name}.`);
+        }
+        validateElements(results[name].elements, names.filter(name => name !== "hints"));
+      }
+    }
+    return layout;
+  }
+
+  function validateElements(elements, expected) {
+    if (!elements || Object.keys(elements).sort().join(",") !== [...expected].sort().join(",")) {
+      throw new Error("Invalid screen elements.");
+    }
+    for (const name of expected) {
+      const element = elements[name];
       if (!element || Object.keys(element).sort().join(",") !== [...properties].sort().join(",")
         || !["left", "center", "right"].includes(element.align)
         || typeof element.visible !== "boolean"
@@ -26,7 +47,6 @@
         throw new Error(`Invalid screen layout element: ${name}.`);
       }
     }
-    return layout;
   }
 
   function clear(root) {
@@ -41,9 +61,11 @@
   function apply(root, settings, options = {}) {
     let key;
     try {
+      const screen = options.screen || (settings.room_failed_at ? "failed"
+        : settings.room_completed_at ? "complete" : "normal");
       const enabled = settings.screen_layout_enabled === true
         && !options.forceDefault && root.dataset.layoutDisabled !== "true";
-      key = JSON.stringify([enabled, enabled ? settings.screen_layout : null]);
+      key = JSON.stringify([enabled, screen, enabled ? settings.screen_layout : null]);
       const previous = applied.get(root);
       if (previous && previous.key === key) return previous.result;
       if (!enabled) {
@@ -53,16 +75,25 @@
         return result;
       }
       const layout = validate(settings.screen_layout);
+      const design = screen === "normal" ? layout : layout.result_layouts?.[screen];
+      if (!design) {
+        clear(root);
+        const result = { active: false, error: null };
+        applied.set(root, { key, result });
+        return result;
+      }
       if (getComputedStyle(root).getPropertyValue("--screen-layout-ready").trim() !== "1") {
         throw new Error("Screen layout styles are unavailable.");
       }
-      const elements = names.map(name => {
+      clear(root);
+      const activeNames = Object.keys(design.elements);
+      const elements = activeNames.map(name => {
         const element = root.querySelector(`[data-layout-element="${name}"]`);
         if (!element) throw new Error(`Missing screen element: ${name}.`);
         return element;
       });
       elements.forEach((element, index) => {
-        const values = layout.elements[names[index]];
+        const values = design.elements[activeNames[index]];
         for (const property of ["x", "y", "width", "height"]) {
           element.style.setProperty(`--layout-${property}`, `${values[property]}%`);
         }
