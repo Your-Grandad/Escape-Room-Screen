@@ -3,7 +3,7 @@ from collections.abc import Callable
 from collections.abc import Iterable
 from threading import RLock, Timer, TIMEOUT_MAX
 
-from gpiozero import Button, OutputDevice
+from gpiozero import DigitalInputDevice, OutputDevice
 from gpiozero.exc import BadPinFactory, GPIOPinInUse, GPIOZeroError
 
 
@@ -39,7 +39,7 @@ class GpioController:
         self._outputs: dict[str, OutputDevice] = {}
         self._configured_output_pins = set((output_pins or {}).values())
         self._direct_outputs: dict[int, OutputDevice] = {}
-        self._buttons: dict[int, Button] = {}
+        self._buttons: dict[int, DigitalInputDevice] = {}
         self._output_lock = RLock()
         self._output_timers: dict[int, Timer] = {}
         self.available = True
@@ -85,8 +85,8 @@ class GpioController:
         try:
             pins = input_pins.items() if isinstance(input_pins, dict) else input_pins
             for name, pin in pins:
-                button = Button(pin)
-                button.when_pressed = lambda pin=pin, name=name: callback(pin, name)
+                button = DigitalInputDevice(pin, pull_up=True)
+                button.when_activated = lambda pin=pin, name=name: callback(pin, name)
                 self._buttons[pin] = button
         except GPIOPinInUse as error:
             for button in self._buttons.values():

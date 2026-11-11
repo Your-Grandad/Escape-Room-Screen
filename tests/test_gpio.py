@@ -7,11 +7,62 @@ from threading import TIMEOUT_MAX
 from unittest.mock import MagicMock, patch
 
 from gpiozero import Device
-from gpiozero.pins.mock import MockFactory
+from gpiozero.pins.mock import MockFactory, MockPin
 
 from escape_room_screen import create_app
 from escape_room_screen.database import connect, initialize
 from escape_room_screen.gpio import GpioController
+
+
+class EarlyEdgePin(MockPin):
+    def _set_when_changed(self, value):
+        super()._set_when_changed(value)
+        if value is not None:
+            self.drive_low()
+            self.drive_high()
+            self.drive_low()
+
+
+class GpioInputTests(unittest.TestCase):
+    def test_sensor_edges_during_registration_do_not_break_later_callbacks(self) -> None:
+        factory = MockFactory(pin_class=EarlyEdgePin)
+        with patch.object(Device, "pin_factory", factory):
+            controller = GpioController()
+            self.addCleanup(controller.close)
+            callback = MagicMock()
+            controller.configure_inputs({"start-timer": 17, "complete-room": 24}, callback)
+            callback.reset_mock()
+            for pin in (17, 24):
+                factory.pin(pin).drive_high()
+                factory.pin(pin).drive_low()
+            self.assertEqual(
+                [call.args for call in callback.call_args_list],
+                [(17, "start-timer"), (24, "complete-room")],
+            )
+
+    def test_reconfiguring_closed_contacts_preserves_active_low_callbacks(self) -> None:
+        factory = MockFactory()
+        with patch.object(Device, "pin_factory", factory):
+            controller = GpioController()
+            self.addCleanup(controller.close)
+            old_callback, callback = MagicMock(), MagicMock()
+            mappings = {"start-timer": 17, "complete-room": 24}
+            controller.configure_inputs(mappings, old_callback)
+            for pin in mappings.values():
+                self.assertEqual(factory.pin(pin).pull, "up")
+                factory.pin(pin).drive_low()
+            old_callback.reset_mock()
+            controller.configure_inputs(mappings, callback)
+            callback.assert_not_called()
+            for pin in mappings.values():
+                factory.pin(pin).drive_high()
+                factory.pin(pin).drive_low()
+                factory.pin(pin).drive_high()
+            old_callback.assert_not_called()
+            self.assertEqual(
+                [call.args for call in callback.call_args_list],
+                [(17, "start-timer"), (24, "complete-room")],
+            )
 
 
 class GpioSignalTests(unittest.TestCase):
